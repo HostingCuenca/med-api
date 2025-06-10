@@ -1,0 +1,243 @@
+// prisma/schema.prisma - MEDICONSA COMPLETO
+generator client {
+ provider = "prisma-client-js"
+}
+
+datasource db {
+ provider = "postgresql"
+ url      = env("DATABASE_URL")
+}
+
+model PerfilUsuario {
+ id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ email           String   @unique
+ passwordHash    String   @map("password_hash")
+ nombreCompleto  String   @map("nombre_completo")
+ nombreUsuario   String   @unique @map("nombre_usuario")
+ telefono        String?
+ avatarUrl       String?  @map("avatar_url")
+ tipoUsuario     String   @default("estudiante") @map("tipo_usuario")
+ activo          Boolean  @default(true)
+ fechaRegistro   DateTime @default(now()) @map("fecha_registro")
+
+ // Relaciones como instructor
+ cursosCreados    Curso[]        @relation("InstructorCursos")
+
+ // Relaciones como estudiante
+ inscripciones    Inscripcion[]
+ progresosClases  ProgresoClase[]
+ intentosSimulacro IntentoSimulacro[]
+
+ // Relaciones como admin
+ pagosAprobados   Inscripcion[]  @relation("AdminAprobaciones")
+
+ @@map("perfiles_usuario")
+}
+
+model Curso {
+ id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ titulo        String
+ descripcion   String?
+ slug          String   @unique
+ miniaturaUrl  String?  @map("miniatura_url")
+ precio        Decimal  @default(0) @db.Decimal(10, 2)
+ descuento     Int      @default(0)
+ tipoExamen    String?  @map("tipo_examen")
+ esGratuito    Boolean  @default(false) @map("es_gratuito")
+ instructorId  String?  @map("instructor_id") @db.Uuid
+ activo        Boolean  @default(true)
+ fechaCreacion DateTime @default(now()) @map("fecha_creacion")
+
+ // Relaciones
+ instructor    PerfilUsuario? @relation("InstructorCursos", fields: [instructorId], references: [id])
+ modulos       Modulo[]
+ inscripciones Inscripcion[]
+ simulacros    Simulacro[]
+ materiales    Material[]
+
+ @@map("cursos")
+}
+
+model Modulo {
+ id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ cursoId       String   @map("curso_id") @db.Uuid
+ titulo        String
+ descripcion   String?
+ orden         Int
+ fechaCreacion DateTime @default(now()) @map("fecha_creacion")
+
+ // Relaciones
+ curso  Curso   @relation(fields: [cursoId], references: [id], onDelete: Cascade)
+ clases Clase[]
+
+ @@map("modulos")
+}
+
+model Clase {
+ id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ moduloId         String   @map("modulo_id") @db.Uuid
+ titulo           String
+ descripcion      String?
+ videoYoutubeUrl  String?  @map("video_youtube_url")
+ duracionMinutos  Int?     @map("duracion_minutos")
+ esGratuita       Boolean  @default(false) @map("es_gratuita")
+ orden            Int
+ fechaCreacion    DateTime @default(now()) @map("fecha_creacion")
+
+ // Relaciones
+ modulo           Modulo          @relation(fields: [moduloId], references: [id], onDelete: Cascade)
+ progresosClases  ProgresoClase[]
+
+ @@map("clases")
+}
+
+model Inscripcion {
+ id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ usuarioId          String    @map("usuario_id") @db.Uuid
+ cursoId            String    @map("curso_id") @db.Uuid
+ estadoPago         String    @default("pendiente") @map("estado_pago")
+ fechaInscripcion   DateTime  @default(now()) @map("fecha_inscripcion")
+ fechaHabilitacion  DateTime? @map("fecha_habilitacion")
+ habilitadoPor      String?   @map("habilitado_por") @db.Uuid
+
+ // Relaciones
+ usuario     PerfilUsuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+ curso       Curso          @relation(fields: [cursoId], references: [id], onDelete: Cascade)
+ aprobadoPor PerfilUsuario? @relation("AdminAprobaciones", fields: [habilitadoPor], references: [id])
+
+ @@unique([usuarioId, cursoId])
+ @@map("inscripciones")
+}
+
+model ProgresoClase {
+ id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ usuarioId        String   @map("usuario_id") @db.Uuid
+ claseId          String   @map("clase_id") @db.Uuid
+ completada       Boolean  @default(false)
+ porcentajeVisto  Int      @default(0)
+ fechaUltimaVista DateTime @default(now()) @map("fecha_ultima_vista")
+
+ // Relaciones
+ usuario PerfilUsuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+ clase   Clase         @relation(fields: [claseId], references: [id], onDelete: Cascade)
+
+ @@unique([usuarioId, claseId])
+ @@map("progreso_clases")
+}
+
+model Simulacro {
+ id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ cursoId                   String   @map("curso_id") @db.Uuid
+ titulo                    String
+ descripcion               String?
+ modoEvaluacion            String   @map("modo_evaluacion")
+ tiempoLimiteMinutos       Int?     @map("tiempo_limite_minutos")
+ tiempoPorPreguntaSegundos Int?     @map("tiempo_por_pregunta_segundos")
+ numeroPreguntas           Int      @map("numero_preguntas")
+ intentosPermitidos        Int      @default(-1) @map("intentos_permitidos")
+ randomizarPreguntas       Boolean  @default(true) @map("randomizar_preguntas")
+ randomizarOpciones        Boolean  @default(true) @map("randomizar_opciones")
+ mostrarRespuestasDespues  Int      @default(1) @map("mostrar_respuestas_despues")
+ activo                    Boolean  @default(true)
+ fechaCreacion             DateTime @default(now()) @map("fecha_creacion")
+
+ // Relaciones
+ curso     Curso              @relation(fields: [cursoId], references: [id], onDelete: Cascade)
+ preguntas Pregunta[]
+ intentos  IntentoSimulacro[]
+
+ @@map("simulacros")
+}
+
+model Pregunta {
+ id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ simulacroId   String   @map("simulacro_id") @db.Uuid
+ enunciado     String
+ tipoPregunta  String   @map("tipo_pregunta")
+ explicacion   String?
+ imagenUrl     String?  @map("imagen_url")
+ fechaCreacion DateTime @default(now()) @map("fecha_creacion")
+
+ // Relaciones
+ simulacro         Simulacro         @relation(fields: [simulacroId], references: [id], onDelete: Cascade)
+ opciones          OpcionRespuesta[]
+ respuestasUsuario RespuestaUsuario[]
+
+ @@map("preguntas")
+}
+
+model OpcionRespuesta {
+ id           String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ preguntaId   String  @map("pregunta_id") @db.Uuid
+ textoOpcion  String  @map("texto_opcion")
+ esCorrecta   Boolean @default(false) @map("es_correcta")
+ orden        Int
+
+ // Relaciones
+ pregunta          Pregunta           @relation(fields: [preguntaId], references: [id], onDelete: Cascade)
+ respuestasUsuario RespuestaUsuario[]
+
+ @@map("opciones_respuesta")
+}
+
+model IntentoSimulacro {
+ id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ usuarioId             String   @map("usuario_id") @db.Uuid
+ simulacroId           String   @map("simulacro_id") @db.Uuid
+ puntaje               Decimal? @db.Decimal(5, 2)
+ totalPreguntas        Int?     @map("total_preguntas")
+ respuestasCorrectas   Int?     @map("respuestas_correctas")
+ tiempoEmpleadoMinutos Int?     @map("tiempo_empleado_minutos")
+ fechaIntento          DateTime @default(now()) @map("fecha_intento")
+
+ // Relaciones
+ usuario    PerfilUsuario      @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+ simulacro  Simulacro          @relation(fields: [simulacroId], references: [id], onDelete: Cascade)
+ respuestas RespuestaUsuario[]
+
+ @@map("intentos_simulacro")
+}
+
+model RespuestaUsuario {
+ id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ intentoSimulacroId   String   @map("intento_simulacro_id") @db.Uuid
+ preguntaId           String   @map("pregunta_id") @db.Uuid
+ opcionSeleccionadaId String   @map("opcion_seleccionada_id") @db.Uuid
+ esCorrecta           Boolean  @default(false) @map("es_correcta")
+ fechaRespuesta       DateTime @default(now()) @map("fecha_respuesta")
+
+ // Relaciones
+ intentoSimulacro   IntentoSimulacro @relation(fields: [intentoSimulacroId], references: [id], onDelete: Cascade)
+ pregunta           Pregunta         @relation(fields: [preguntaId], references: [id], onDelete: Cascade)
+ opcionSeleccionada OpcionRespuesta  @relation(fields: [opcionSeleccionadaId], references: [id], onDelete: Cascade)
+
+ @@map("respuestas_usuario")
+}
+
+model Material {
+ id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ titulo        String
+ descripcion   String?
+ archivoUrl    String   @map("archivo_url")
+ tipoArchivo   String?  @map("tipo_archivo")
+ precio        Decimal  @default(0) @db.Decimal(10, 2)
+ esGratuito    Boolean  @default(false) @map("es_gratuito")
+ cursoId       String?  @map("curso_id") @db.Uuid
+ fechaCreacion DateTime @default(now()) @map("fecha_creacion")
+
+ // Relaciones
+ curso Curso? @relation(fields: [cursoId], references: [id], onDelete: SetNull)
+
+ @@map("materiales")
+}
+
+// =============================================
+// ÍNDICES PARA OPTIMIZACIÓN
+// =============================================
+
+// Ya están implícitos con @unique y relaciones, pero se pueden agregar más:
+
+// @@index([tipoUsuario]) en PerfilUsuario para filtros por tipo
+// @@index([tipoExamen]) en Curso para filtros por examen
+// @@index([estadoPago]) en Inscripcion para dashboards admin
+// @@index([fechaCreacion]) en varios modelos para ordenamiento
