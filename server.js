@@ -1,10 +1,10 @@
-// server.js - Mediconsa API 100% Completa
+// server.js - Agregar estas líneas
 const express = require('express')
 const cors = require('cors')
 require('dotenv').config()
 
 const app = express()
-const PORT = process.env.PORT || 5000
+const PORT = process.env.PORT || 5001
 
 // Middleware
 app.use(cors())
@@ -24,7 +24,8 @@ app.get('/', (req, res) => {
             'Tracking de progreso',
             'Dashboard admin y estudiante',
             'Aprobación de pagos',
-            'Reportes y estadísticas'
+            'Reportes y estadísticas',
+            'Gestión de usuarios'  // NUEVO
         ],
         endpoints: {
             auth: '/med-api/auth',
@@ -33,13 +34,15 @@ app.get('/', (req, res) => {
             enrollments: '/med-api/enrollments',
             simulacros: '/med-api/simulacros',
             progress: '/med-api/progress',
-            dashboard: '/med-api/dashboard'
+            dashboard: '/med-api/dashboard',
+            userManagement: '/med-api/user-management',  // NUEVO
+            reports: '/med-api/reports'  // NUEVO
         },
         timestamp: new Date().toISOString()
     })
 })
 
-// Routes
+// Routes EXISTENTES
 app.use('/med-api/auth', require('./routes/auth'))
 app.use('/med-api/courses', require('./routes/courses'))
 app.use('/med-api/course-management', require('./routes/courseManagement'))
@@ -47,6 +50,10 @@ app.use('/med-api/enrollments', require('./routes/enrollments'))
 app.use('/med-api/simulacros', require('./routes/simulacros'))
 app.use('/med-api/progress', require('./routes/progress'))
 app.use('/med-api/dashboard', require('./routes/dashboard'))
+
+// Routes FALTANTES - AGREGAR ESTAS:
+app.use('/med-api/user-management', require('./routes/userManagement'))
+app.use('/med-api/reports', require('./routes/reports'))
 
 // Error handling
 app.use((err, req, res, next) => {
@@ -70,7 +77,9 @@ app.use('*', (req, res) => {
             '/med-api/enrollments',
             '/med-api/simulacros',
             '/med-api/progress',
-            '/med-api/dashboard'
+            '/med-api/dashboard',
+            '/med-api/user-management',  // NUEVO
+            '/med-api/reports'  // NUEVO
         ]
     })
 })
@@ -85,5 +94,7 @@ app.listen(PORT, () => {
     console.log(`🧪 Simulacros: http://localhost:${PORT}/med-api/simulacros`)
     console.log(`📊 Progress: http://localhost:${PORT}/med-api/progress`)
     console.log(`📈 Dashboard: http://localhost:${PORT}/med-api/dashboard`)
+    console.log(`👥 User Management: http://localhost:${PORT}/med-api/user-management`)  // NUEVO
+    console.log(`📋 Reports: http://localhost:${PORT}/med-api/reports`)  // NUEVO
     console.log('✅ Backend Mediconsa 100% COMPLETO Y LISTO')
 })
