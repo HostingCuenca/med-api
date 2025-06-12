@@ -1,4 +1,4 @@
-// routes/enrollments.js
+// routes/enrollments.js - CORREGIDO
 const express = require('express')
 const router = express.Router()
 const {
@@ -10,10 +10,17 @@ const {
 } = require('../controllers/enrollmentController')
 const { authenticateToken, requireRole } = require('../middleware/auth')
 
+// Inscribirse a un curso
 router.post('/', authenticateToken, enrollCourse)
+
+// Obtener mis inscripciones (MyCourses)
 router.get('/my', authenticateToken, getMyEnrollments)
+
+// Verificar acceso a curso específico
+router.get('/check-access/:cursoId', authenticateToken, checkCourseAccess)
+
+// Rutas de administración
 router.get('/pending', authenticateToken, requireRole(['admin']), getPendingPayments)
 router.patch('/:inscripcionId/approve', authenticateToken, requireRole(['admin']), approvePayment)
-router.get('/check-access/:cursoId', authenticateToken, checkCourseAccess)
 
 module.exports = router

@@ -1,4 +1,4 @@
-// controllers/enrollmentController.js
+// controllers/enrollmentController.js - CORREGIDO
 const pool = require('../config/database')
 
 // =============================================
@@ -51,9 +51,9 @@ const enrollCourse = async (req, res) => {
         const estadoInicial = curso.es_gratuito ? 'habilitado' : 'pendiente'
 
         const result = await pool.query(
-            `INSERT INTO inscripciones (usuario_id, curso_id, estado_pago, fecha_habilitacion) 
-       VALUES ($1, $2, $3, $4) 
-       RETURNING *`,
+            `INSERT INTO inscripciones (usuario_id, curso_id, estado_pago, fecha_habilitacion)
+             VALUES ($1, $2, $3, $4)
+                 RETURNING *`,
             [userId, cursoId, estadoInicial, curso.es_gratuito ? new Date() : null]
         )
 
@@ -80,7 +80,7 @@ const enrollCourse = async (req, res) => {
 }
 
 // =============================================
-// MIS INSCRIPCIONES
+// MIS INSCRIPCIONES - CORREGIDO
 // =============================================
 const getMyEnrollments = async (req, res) => {
     try {
@@ -88,23 +88,26 @@ const getMyEnrollments = async (req, res) => {
 
         const result = await pool.query(
             `SELECT i.*, c.titulo, c.slug, c.miniatura_url, c.precio, c.es_gratuito,
-        p.nombre_completo as instructor_nombre,
-        COUNT(DISTINCT cl.id) as total_clases,
-        COUNT(DISTINCT CASE WHEN pc.completada = true THEN pc.clase_id END) as clases_completadas,
-        CASE 
-          WHEN COUNT(DISTINCT cl.id) > 0 THEN 
-            ROUND((COUNT(DISTINCT CASE WHEN pc.completada = true THEN pc.clase_id END)::float / COUNT(DISTINCT cl.id)::float) * 100, 2)
-          ELSE 0 
-        END as porcentaje_progreso
-       FROM inscripciones i
-       JOIN cursos c ON i.curso_id = c.id
-       LEFT JOIN perfiles_usuario p ON c.instructor_id = p.id
-       LEFT JOIN modulos m ON c.id = m.curso_id
-       LEFT JOIN clases cl ON m.id = cl.modulo_id
-       LEFT JOIN progreso_clases pc ON cl.id = pc.clase_id AND pc.usuario_id = $1
-       WHERE i.usuario_id = $1
-       GROUP BY i.id, c.id, p.nombre_completo
-       ORDER BY i.fecha_inscripcion DESC`,
+                    p.nombre_completo as instructor_nombre,
+                    COUNT(DISTINCT cl.id) as total_clases,
+                    COUNT(DISTINCT CASE WHEN pc.completada = true THEN pc.clase_id END) as clases_completadas,
+                    CASE
+                        WHEN COUNT(DISTINCT cl.id) > 0 THEN
+                            CAST(
+                                    (COUNT(DISTINCT CASE WHEN pc.completada = true THEN pc.clase_id END)::float / COUNT(DISTINCT cl.id)::float) * 100
+                                AS DECIMAL(5,2)
+                            )
+                        ELSE 0
+                        END as porcentaje_progreso
+             FROM inscripciones i
+                      JOIN cursos c ON i.curso_id = c.id
+                      LEFT JOIN perfiles_usuario p ON c.instructor_id = p.id
+                      LEFT JOIN modulos m ON c.id = m.curso_id
+                      LEFT JOIN clases cl ON m.id = cl.modulo_id
+                      LEFT JOIN progreso_clases pc ON cl.id = pc.clase_id AND pc.usuario_id = $1
+             WHERE i.usuario_id = $1
+             GROUP BY i.id, c.id, p.nombre_completo
+             ORDER BY i.fecha_inscripcion DESC`,
             [userId]
         )
 
@@ -132,11 +135,11 @@ const approvePayment = async (req, res) => {
 
         // Obtener información de la inscripción
         const inscripcionResult = await pool.query(
-            `SELECT i.*, u.nombre_completo, u.email, c.titulo 
-       FROM inscripciones i
-       JOIN perfiles_usuario u ON i.usuario_id = u.id
-       JOIN cursos c ON i.curso_id = c.id
-       WHERE i.id = $1 AND i.estado_pago = 'pendiente'`,
+            `SELECT i.*, u.nombre_completo, u.email, c.titulo
+             FROM inscripciones i
+                      JOIN perfiles_usuario u ON i.usuario_id = u.id
+                      JOIN cursos c ON i.curso_id = c.id
+             WHERE i.id = $1 AND i.estado_pago = 'pendiente'`,
             [inscripcionId]
         )
 
@@ -149,10 +152,10 @@ const approvePayment = async (req, res) => {
 
         // Aprobar pago
         const result = await pool.query(
-            `UPDATE inscripciones 
-       SET estado_pago = 'habilitado', fecha_habilitacion = NOW(), habilitado_por = $1 
-       WHERE id = $2
-       RETURNING *`,
+            `UPDATE inscripciones
+             SET estado_pago = 'habilitado', fecha_habilitacion = NOW(), habilitado_por = $1
+             WHERE id = $2
+                 RETURNING *`,
             [adminId, inscripcionId]
         )
 
@@ -179,14 +182,14 @@ const approvePayment = async (req, res) => {
 const getPendingPayments = async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT i.id, i.fecha_inscripcion, 
-        u.nombre_completo, u.email, u.nombre_usuario,
-        c.titulo as curso_titulo, c.precio
-       FROM inscripciones i
-       JOIN perfiles_usuario u ON i.usuario_id = u.id
-       JOIN cursos c ON i.curso_id = c.id
-       WHERE i.estado_pago = 'pendiente'
-       ORDER BY i.fecha_inscripcion ASC`
+            `SELECT i.id, i.fecha_inscripcion,
+                    u.nombre_completo, u.email, u.nombre_usuario,
+                    c.titulo as curso_titulo, c.precio
+             FROM inscripciones i
+                      JOIN perfiles_usuario u ON i.usuario_id = u.id
+                      JOIN cursos c ON i.curso_id = c.id
+             WHERE i.estado_pago = 'pendiente'
+             ORDER BY i.fecha_inscripcion ASC`
         )
 
         res.json({
@@ -216,9 +219,9 @@ const checkCourseAccess = async (req, res) => {
 
         const result = await pool.query(
             `SELECT c.es_gratuito, i.estado_pago, i.fecha_habilitacion
-       FROM cursos c
-       LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
-       WHERE c.id = $2 AND c.activo = true`,
+             FROM cursos c
+                      LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
+             WHERE c.id = $2 AND c.activo = true`,
             [userId, cursoId]
         )
 
