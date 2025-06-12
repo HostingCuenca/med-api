@@ -9,12 +9,12 @@ const getCourses = async (req, res) => {
         const { tipo, gratuito, search } = req.query
 
         let query = `
-      SELECT c.*, p.nombre_completo as instructor_nombre,
-      (SELECT COUNT(*) FROM inscripciones i WHERE i.curso_id = c.id AND i.estado_pago = 'habilitado') as estudiantes_inscritos
-      FROM cursos c 
-      LEFT JOIN perfiles_usuario p ON c.instructor_id = p.id 
-      WHERE c.activo = true
-    `
+            SELECT c.*, p.nombre_completo as instructor_nombre,
+            (SELECT COUNT(*) FROM inscripciones i WHERE i.curso_id = c.id AND i.estado_pago = 'habilitado') as estudiantes_inscritos
+            FROM cursos c 
+            LEFT JOIN perfiles_usuario p ON c.instructor_id = p.id 
+            WHERE c.activo = true
+        `
         const params = []
         let paramCount = 0
 
@@ -66,10 +66,10 @@ const getCourseById = async (req, res) => {
 
         const result = await pool.query(
             `SELECT c.*, p.nombre_completo as instructor_nombre,
-       (SELECT COUNT(*) FROM inscripciones i WHERE i.curso_id = c.id AND i.estado_pago = 'habilitado') as estudiantes_inscritos
-       FROM cursos c 
-       LEFT JOIN perfiles_usuario p ON c.instructor_id = p.id 
-       WHERE c.id = $1 AND c.activo = true`,
+            (SELECT COUNT(*) FROM inscripciones i WHERE i.curso_id = c.id AND i.estado_pago = 'habilitado') as estudiantes_inscritos
+            FROM cursos c 
+            LEFT JOIN perfiles_usuario p ON c.instructor_id = p.id 
+            WHERE c.id = $1 AND c.activo = true`,
             [id]
         )
 
@@ -83,26 +83,26 @@ const getCourseById = async (req, res) => {
         // Obtener módulos y clases
         const modulosResult = await pool.query(
             `SELECT m.*, 
-       COALESCE(
-         json_agg(
-           CASE WHEN cl.id IS NOT NULL THEN
-             json_build_object(
-               'id', cl.id,
-               'titulo', cl.titulo,
-               'descripcion', cl.descripcion,
-               'video_youtube_url', cl.video_youtube_url,
-               'duracion_minutos', cl.duracion_minutos,
-               'es_gratuita', cl.es_gratuita,
-               'orden', cl.orden
-             )
-           END ORDER BY cl.orden
-         ) FILTER (WHERE cl.id IS NOT NULL), '[]'::json
-       ) as clases
-       FROM modulos m
-       LEFT JOIN clases cl ON m.id = cl.modulo_id
-       WHERE m.curso_id = $1
-       GROUP BY m.id
-       ORDER BY m.orden`,
+            COALESCE(
+                json_agg(
+                    CASE WHEN cl.id IS NOT NULL THEN
+                        json_build_object(
+                            'id', cl.id,
+                            'titulo', cl.titulo,
+                            'descripcion', cl.descripcion,
+                            'video_youtube_url', cl.video_youtube_url,
+                            'duracion_minutos', cl.duracion_minutos,
+                            'es_gratuita', cl.es_gratuita,
+                            'orden', cl.orden
+                        )
+                    END ORDER BY cl.orden
+                ) FILTER (WHERE cl.id IS NOT NULL), '[]'::json
+            ) as clases
+            FROM modulos m
+            LEFT JOIN clases cl ON m.id = cl.modulo_id
+            WHERE m.curso_id = $1
+            GROUP BY m.id
+            ORDER BY m.orden`,
             [id]
         )
 
@@ -124,11 +124,20 @@ const getCourseById = async (req, res) => {
 }
 
 // =============================================
-// CREAR CURSO (ADMIN/INSTRUCTOR)
+// CREAR CURSO (ADMIN/INSTRUCTOR) - CORREGIDO
 // =============================================
 const createCourse = async (req, res) => {
     try {
-        const { titulo, descripcion, slug, precio = 0, tipoExamen, esGratuito = false } = req.body
+        const {
+            titulo,
+            descripcion,
+            slug,
+            miniatura_url,  // ← AGREGAR ESTE CAMPO
+            precio = 0,
+            descuento = 0,  // ← AGREGAR ESTE CAMPO
+            tipoExamen,
+            esGratuito = false
+        } = req.body
 
         if (!titulo || !descripcion || !slug) {
             return res.status(400).json({
@@ -150,11 +159,12 @@ const createCourse = async (req, res) => {
             })
         }
 
+        // QUERY CORREGIDO - Incluir todos los campos
         const result = await pool.query(
-            `INSERT INTO cursos (titulo, descripcion, slug, precio, tipo_examen, es_gratuito, instructor_id) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) 
-       RETURNING *`,
-            [titulo, descripcion, slug, precio, tipoExamen, esGratuito, req.user.id]
+            `INSERT INTO cursos (titulo, descripcion, slug, miniatura_url, precio, descuento, tipo_examen, es_gratuito, instructor_id) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+             RETURNING *`,
+            [titulo, descripcion, slug, miniatura_url, precio, descuento, tipoExamen, esGratuito, req.user.id]
         )
 
         res.status(201).json({
@@ -172,4 +182,210 @@ const createCourse = async (req, res) => {
     }
 }
 
-module.exports = { getCourses, getCourseById, createCourse }
+// =============================================
+// ACTUALIZAR CURSO (ADMIN/INSTRUCTOR)
+// =============================================
+const updateCourse = async (req, res) => {
+    try {
+        const { id } = req.params
+        const {
+            titulo,
+            descripcion,
+            slug,
+            miniatura_url,
+            precio,
+            descuento,
+            tipo_examen,
+            es_gratuito,
+            activo
+        } = req.body
+
+        // Verificar que el curso existe
+        const existingCourse = await pool.query(
+            'SELECT * FROM cursos WHERE id = $1',
+            [id]
+        )
+
+        if (existingCourse.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Curso no encontrado'
+            })
+        }
+
+        // Verificar permisos (solo el instructor del curso o admin)
+        const course = existingCourse.rows[0]
+        if (req.user.tipo_usuario !== 'admin' && course.instructor_id !== req.user.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'No tienes permisos para editar este curso'
+            })
+        }
+
+        // Verificar slug único (si se está cambiando)
+        if (slug && slug !== course.slug) {
+            const slugExists = await pool.query(
+                'SELECT id FROM cursos WHERE slug = $1 AND id != $2',
+                [slug, id]
+            )
+
+            if (slugExists.rows.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'El slug ya existe'
+                })
+            }
+        }
+
+        // Construir query dinámico
+        const fieldsToUpdate = []
+        const params = []
+        let paramCount = 0
+
+        if (titulo !== undefined) {
+            paramCount++
+            fieldsToUpdate.push(`titulo = $${paramCount}`)
+            params.push(titulo)
+        }
+
+        if (descripcion !== undefined) {
+            paramCount++
+            fieldsToUpdate.push(`descripcion = $${paramCount}`)
+            params.push(descripcion)
+        }
+
+        if (slug !== undefined) {
+            paramCount++
+            fieldsToUpdate.push(`slug = $${paramCount}`)
+            params.push(slug)
+        }
+
+        if (miniatura_url !== undefined) {
+            paramCount++
+            fieldsToUpdate.push(`miniatura_url = $${paramCount}`)
+            params.push(miniatura_url)
+        }
+
+        if (precio !== undefined) {
+            paramCount++
+            fieldsToUpdate.push(`precio = $${paramCount}`)
+            params.push(precio)
+        }
+
+        if (descuento !== undefined) {
+            paramCount++
+            fieldsToUpdate.push(`descuento = $${paramCount}`)
+            params.push(descuento)
+        }
+
+        if (tipo_examen !== undefined) {
+            paramCount++
+            fieldsToUpdate.push(`tipo_examen = $${paramCount}`)
+            params.push(tipo_examen)
+        }
+
+        if (es_gratuito !== undefined) {
+            paramCount++
+            fieldsToUpdate.push(`es_gratuito = $${paramCount}`)
+            params.push(es_gratuito)
+        }
+
+        if (activo !== undefined) {
+            paramCount++
+            fieldsToUpdate.push(`activo = $${paramCount}`)
+            params.push(activo)
+        }
+
+        if (fieldsToUpdate.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No se proporcionaron campos para actualizar'
+            })
+        }
+
+        // Agregar ID al final
+        paramCount++
+        params.push(id)
+
+        const query = `
+            UPDATE cursos 
+            SET ${fieldsToUpdate.join(', ')}
+            WHERE id = $${paramCount}
+            RETURNING *
+        `
+
+        const result = await pool.query(query, params)
+
+        res.json({
+            success: true,
+            message: 'Curso actualizado exitosamente',
+            data: { curso: result.rows[0] }
+        })
+
+    } catch (error) {
+        console.error('Error actualizando curso:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
+// ELIMINAR/DESACTIVAR CURSO (ADMIN/INSTRUCTOR)
+// =============================================
+const deleteCourse = async (req, res) => {
+    try {
+        const { id } = req.params
+
+        // Verificar que el curso existe
+        const existingCourse = await pool.query(
+            'SELECT * FROM cursos WHERE id = $1',
+            [id]
+        )
+
+        if (existingCourse.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Curso no encontrado'
+            })
+        }
+
+        const course = existingCourse.rows[0]
+
+        // Verificar permisos
+        if (req.user.tipo_usuario !== 'admin' && course.instructor_id !== req.user.id) {
+            return res.status(403).json({
+                success: false,
+                message: 'No tienes permisos para eliminar este curso'
+            })
+        }
+
+        // Soft delete (desactivar)
+        const result = await pool.query(
+            'UPDATE cursos SET activo = false WHERE id = $1 RETURNING *',
+            [id]
+        )
+
+        res.json({
+            success: true,
+            message: 'Curso desactivado exitosamente',
+            data: { curso: result.rows[0] }
+        })
+
+    } catch (error) {
+        console.error('Error eliminando curso:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+module.exports = {
+    getCourses,
+    getCourseById,
+    createCourse,
+    updateCourse,
+    deleteCourse
+}
