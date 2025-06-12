@@ -209,6 +209,160 @@ const getPendingPayments = async (req, res) => {
     }
 }
 
+// controllers/enrollmentController.js - AGREGAR ESTE NUEVO MÉTODO
+
+// =============================================
+// OBTENER TODAS LAS INSCRIPCIONES (ADMIN) - NUEVO
+// =============================================
+const getAllEnrollments = async (req, res) => {
+    try {
+        const {
+            page = 1,
+            limit = 20,
+            estado,
+            search,
+            curso,
+            fechaDesde,
+            fechaHasta
+        } = req.query
+
+        let query = `
+            SELECT i.*, 
+                   u.nombre_completo, u.email, u.nombre_usuario, u.telefono,
+                   c.titulo as curso_titulo, c.precio, c.es_gratuito, c.slug,
+                   admin.nombre_completo as aprobado_por_nombre
+            FROM inscripciones i
+            JOIN perfiles_usuario u ON i.usuario_id = u.id
+            JOIN cursos c ON i.curso_id = c.id
+            LEFT JOIN perfiles_usuario admin ON i.habilitado_por = admin.id
+            WHERE 1=1
+        `
+        const params = []
+        let paramCount = 0
+
+        // Filtro por estado
+        if (estado && estado !== 'todos' && estado !== '') {
+            paramCount++
+            query += ` AND i.estado_pago = $${paramCount}`
+            params.push(estado)
+        }
+
+        // Filtro por búsqueda (usuario, email, curso)
+        if (search) {
+            paramCount++
+            query += ` AND (
+                u.nombre_completo ILIKE $${paramCount} OR 
+                u.email ILIKE $${paramCount} OR 
+                u.nombre_usuario ILIKE $${paramCount} OR
+                c.titulo ILIKE $${paramCount}
+            )`
+            params.push(`%${search}%`)
+        }
+
+        // Filtro por curso específico
+        if (curso) {
+            paramCount++
+            query += ` AND c.titulo ILIKE $${paramCount}`
+            params.push(`%${curso}%`)
+        }
+
+        // Filtro por fecha
+        if (fechaDesde) {
+            paramCount++
+            query += ` AND i.fecha_inscripcion >= $${paramCount}`
+            params.push(fechaDesde)
+        }
+
+        if (fechaHasta) {
+            paramCount++
+            query += ` AND i.fecha_inscripcion <= $${paramCount}`
+            params.push(fechaHasta)
+        }
+
+        // Ordenar por fecha más reciente
+        query += ` ORDER BY i.fecha_inscripcion DESC`
+
+        // Paginación
+        const offset = (page - 1) * limit
+        query += ` LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`
+        params.push(limit, offset)
+
+        const result = await pool.query(query, params)
+
+        // Contar total para paginación
+        let countQuery = `
+            SELECT COUNT(*) as total
+            FROM inscripciones i
+            JOIN perfiles_usuario u ON i.usuario_id = u.id
+            JOIN cursos c ON i.curso_id = c.id
+            WHERE 1=1
+        `
+        const countParams = []
+        let countParamCount = 0
+
+        // Repetir filtros para el conteo
+        if (estado && estado !== 'todos' && estado !== '') {
+            countParamCount++
+            countQuery += ` AND i.estado_pago = $${countParamCount}`
+            countParams.push(estado)
+        }
+
+        if (search) {
+            countParamCount++
+            countQuery += ` AND (
+                u.nombre_completo ILIKE $${countParamCount} OR 
+                u.email ILIKE $${countParamCount} OR 
+                u.nombre_usuario ILIKE $${countParamCount} OR
+                c.titulo ILIKE $${countParamCount}
+            )`
+            countParams.push(`%${search}%`)
+        }
+
+        if (curso) {
+            countParamCount++
+            countQuery += ` AND c.titulo ILIKE $${countParamCount}`
+            countParams.push(`%${curso}%`)
+        }
+
+        if (fechaDesde) {
+            countParamCount++
+            countQuery += ` AND i.fecha_inscripcion >= $${countParamCount}`
+            countParams.push(fechaDesde)
+        }
+
+        if (fechaHasta) {
+            countParamCount++
+            countQuery += ` AND i.fecha_inscripcion <= $${countParamCount}`
+            countParams.push(fechaHasta)
+        }
+
+        const countResult = await pool.query(countQuery, countParams)
+        const total = parseInt(countResult.rows[0].total)
+
+        res.json({
+            success: true,
+            data: {
+                inscripciones: result.rows,
+                pagination: {
+                    total,
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    totalPages: Math.ceil(total / limit)
+                }
+            }
+        })
+
+    } catch (error) {
+        console.error('Error obteniendo todas las inscripciones:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+
+
 // =============================================
 // VERIFICAR ACCESO A CURSO
 // =============================================
@@ -259,5 +413,6 @@ module.exports = {
     getMyEnrollments,
     approvePayment,
     getPendingPayments,
-    checkCourseAccess
+    checkCourseAccess,
+    getAllEnrollments
 }

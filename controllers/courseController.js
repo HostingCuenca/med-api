@@ -126,15 +126,20 @@ const getCourseById = async (req, res) => {
 // =============================================
 // CREAR CURSO (ADMIN/INSTRUCTOR) - CORREGIDO
 // =============================================
+// controllers/courseController.js - MÉTODOS CORREGIDOS
+
+// =============================================
+// CREAR CURSO (ADMIN/INSTRUCTOR) - LÓGICA CORREGIDA
+// =============================================
 const createCourse = async (req, res) => {
     try {
-        const {
+        let {
             titulo,
             descripcion,
             slug,
-            miniatura_url,  // ← AGREGAR ESTE CAMPO
+            miniatura_url,
             precio = 0,
-            descuento = 0,  // ← AGREGAR ESTE CAMPO
+            descuento = 0,
             tipoExamen,
             esGratuito = false
         } = req.body
@@ -143,6 +148,36 @@ const createCourse = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'Título, descripción y slug son requeridos'
+            })
+        }
+
+        // ✅ LÓGICA CORREGIDA DE GRATUITO
+        // Validar y normalizar precio
+        precio = parseFloat(precio) || 0
+
+        // Si precio es 0 o negativo → automáticamente gratuito
+        if (precio <= 0) {
+            esGratuito = true
+            precio = 0
+        }
+
+        // Si esGratuito es true → automáticamente precio 0
+        if (esGratuito) {
+            precio = 0
+        }
+
+        // Validaciones adicionales
+        if (precio < 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'El precio no puede ser negativo'
+            })
+        }
+
+        if (descuento < 0 || descuento > 100) {
+            return res.status(400).json({
+                success: false,
+                message: 'El descuento debe estar entre 0 y 100'
             })
         }
 
@@ -159,7 +194,6 @@ const createCourse = async (req, res) => {
             })
         }
 
-        // QUERY CORREGIDO - Incluir todos los campos
         const result = await pool.query(
             `INSERT INTO cursos (titulo, descripcion, slug, miniatura_url, precio, descuento, tipo_examen, es_gratuito, instructor_id) 
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
@@ -170,7 +204,15 @@ const createCourse = async (req, res) => {
         res.status(201).json({
             success: true,
             message: 'Curso creado exitosamente',
-            data: { curso: result.rows[0] }
+            data: {
+                curso: result.rows[0],
+                // Información adicional para debug
+                logica_aplicada: {
+                    precio_final: precio,
+                    es_gratuito: esGratuito,
+                    razon: precio === 0 ? 'Precio 0 → Automáticamente gratuito' : esGratuito ? 'Marcado como gratuito → Precio ajustado a 0' : 'Curso de pago'
+                }
+            }
         })
 
     } catch (error) {
@@ -183,12 +225,12 @@ const createCourse = async (req, res) => {
 }
 
 // =============================================
-// ACTUALIZAR CURSO (ADMIN/INSTRUCTOR)
+// ACTUALIZAR CURSO (ADMIN/INSTRUCTOR) - LÓGICA CORREGIDA
 // =============================================
 const updateCourse = async (req, res) => {
     try {
         const { id } = req.params
-        const {
+        let {
             titulo,
             descripcion,
             slug,
@@ -235,6 +277,38 @@ const updateCourse = async (req, res) => {
                     message: 'El slug ya existe'
                 })
             }
+        }
+
+        // ✅ APLICAR LÓGICA CORREGIDA DE GRATUITO
+        if (precio !== undefined || es_gratuito !== undefined) {
+            // Obtener valores actuales si no se envían
+            precio = precio !== undefined ? parseFloat(precio) || 0 : course.precio
+            es_gratuito = es_gratuito !== undefined ? es_gratuito : course.es_gratuito
+
+            // Aplicar lógica de consistencia
+            if (precio <= 0) {
+                es_gratuito = true
+                precio = 0
+            }
+
+            if (es_gratuito) {
+                precio = 0
+            }
+
+            // Validaciones
+            if (precio < 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'El precio no puede ser negativo'
+                })
+            }
+        }
+
+        if (descuento !== undefined && (descuento < 0 || descuento > 100)) {
+            return res.status(400).json({
+                success: false,
+                message: 'El descuento debe estar entre 0 y 100'
+            })
         }
 
         // Construir query dinámico
@@ -319,7 +393,15 @@ const updateCourse = async (req, res) => {
         res.json({
             success: true,
             message: 'Curso actualizado exitosamente',
-            data: { curso: result.rows[0] }
+            data: {
+                curso: result.rows[0],
+                // Información adicional para debug
+                cambios_aplicados: {
+                    precio_final: result.rows[0].precio,
+                    es_gratuito: result.rows[0].es_gratuito,
+                    logica_aplicada: result.rows[0].precio === 0 ? 'Automáticamente gratuito' : 'Curso de pago'
+                }
+            }
         })
 
     } catch (error) {
@@ -330,6 +412,8 @@ const updateCourse = async (req, res) => {
         })
     }
 }
+
+
 
 // =============================================
 // ELIMINAR/DESACTIVAR CURSO (ADMIN/INSTRUCTOR)
