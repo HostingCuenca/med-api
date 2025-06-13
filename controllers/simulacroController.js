@@ -7,7 +7,9 @@ const pool = require('../config/database')
 const getSimulacrosByCourse = async (req, res) => {
     try {
         const { cursoId } = req.params
-        const userId = req.user?.id
+        const userId = req.user?.id || null // ✅ CORREGIDO: Asegurar que no sea undefined
+
+        console.log('Debug - userId:', userId, 'cursoId:', cursoId) // Para debugging
 
         // Verificar que el curso existe
         const cursoCheck = await pool.query(
@@ -22,30 +24,41 @@ const getSimulacrosByCourse = async (req, res) => {
             })
         }
 
+        // ✅ CORREGIDO: Query simplificada para evitar problemas de tipo
         const result = await pool.query(
             `SELECT s.*,
-        (SELECT COUNT(*) FROM preguntas p WHERE p.simulacro_id = s.id) as total_preguntas_disponibles,
-        CASE 
-          WHEN $1 IS NOT NULL THEN 
-            (SELECT COUNT(*) FROM intentos_simulacro i WHERE i.simulacro_id = s.id AND i.usuario_id = $1)
-          ELSE 0 
-        END as mis_intentos,
-        CASE 
-          WHEN $1 IS NOT NULL THEN 
-            (SELECT MAX(puntaje) FROM intentos_simulacro i WHERE i.simulacro_id = s.id AND i.usuario_id = $1)
-          ELSE NULL 
-        END as mejor_puntaje
-       FROM simulacros s 
-       WHERE s.curso_id = $2 AND s.activo = true 
-       ORDER BY s.fecha_creacion`,
+                (SELECT COUNT(*) FROM preguntas p WHERE p.simulacro_id = s.id) as total_preguntas_disponibles,
+                COALESCE(
+                    (SELECT COUNT(*) FROM intentos_simulacro i WHERE i.simulacro_id = s.id AND i.usuario_id = $1),
+                    0
+                ) as mis_intentos,
+                (SELECT MAX(puntaje) FROM intentos_simulacro i WHERE i.simulacro_id = s.id AND i.usuario_id = $1) as mejor_puntaje
+            FROM simulacros s 
+            WHERE s.curso_id = $2 AND s.activo = true 
+            ORDER BY s.fecha_creacion`,
             [userId, cursoId]
         )
+
+        // ✅ MEJORADO: Formatear respuesta con valores por defecto
+        const simulacros = result.rows.map(row => ({
+            ...row,
+            mis_intentos: parseInt(row.mis_intentos) || 0,
+            mejor_puntaje: row.mejor_puntaje ? parseFloat(row.mejor_puntaje) : null,
+            total_preguntas_disponibles: parseInt(row.total_preguntas_disponibles) || 0
+        }))
 
         res.json({
             success: true,
             data: {
-                simulacros: result.rows,
-                curso: cursoCheck.rows[0]
+                simulacros,
+                curso: cursoCheck.rows[0],
+                estadisticas: {
+                    total_simulacros: simulacros.length,
+                    completados: simulacros.filter(s => s.mis_intentos > 0).length,
+                    promedio_puntaje: simulacros.length > 0
+                        ? simulacros.reduce((acc, s) => acc + (s.mejor_puntaje || 0), 0) / simulacros.length
+                        : 0
+                }
             }
         })
 
@@ -58,25 +71,34 @@ const getSimulacrosByCourse = async (req, res) => {
     }
 }
 
+
 // =============================================
 // OBTENER PREGUNTAS DEL SIMULACRO
 // =============================================
 const getSimulacroQuestions = async (req, res) => {
     try {
         const { simulacroId } = req.params
-        const userId = req.user.id
+        const userId = req.user?.id
 
-        // Verificar acceso al simulacro
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
+
+        // ✅ MEJORADO: Query más robusta para verificar acceso
         const accessCheck = await pool.query(
             `SELECT s.*, c.es_gratuito, c.titulo as curso_titulo,
-        CASE 
-          WHEN c.es_gratuito = true THEN 'habilitado'
-          ELSE COALESCE(i.estado_pago, 'no_inscrito')
-        END as estado_acceso
-       FROM simulacros s
-       JOIN cursos c ON s.curso_id = c.id
-       LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
-       WHERE s.id = $2 AND s.activo = true`,
+                    CASE
+                        WHEN c.es_gratuito = true THEN 'habilitado'
+                        WHEN i.estado_pago IS NULL THEN 'no_inscrito'
+                        ELSE i.estado_pago
+                        END as estado_acceso
+             FROM simulacros s
+                      JOIN cursos c ON s.curso_id = c.id
+                      LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
+             WHERE s.id = $2 AND s.activo = true`,
             [userId, simulacroId]
         )
 
@@ -119,24 +141,24 @@ const getSimulacroQuestions = async (req, res) => {
             }
         }
 
-        // Obtener preguntas con randomización
+        // ✅ MEJORADO: Query más eficiente para obtener preguntas
         const orderClause = simulacro.randomizar_preguntas ? 'ORDER BY RANDOM()' : 'ORDER BY p.fecha_creacion'
         const limitClause = simulacro.numero_preguntas > 0 ? `LIMIT ${simulacro.numero_preguntas}` : ''
 
         const preguntasResult = await pool.query(
             `SELECT p.id, p.enunciado, p.tipo_pregunta, p.imagen_url,
-       json_agg(
-         json_build_object(
-           'id', o.id,
-           'texto_opcion', o.texto_opcion,
-           'orden', o.orden
-         ) ORDER BY ${simulacro.randomizar_opciones ? 'RANDOM()' : 'o.orden'}
-       ) as opciones
-       FROM preguntas p
-       JOIN opciones_respuesta o ON p.id = o.pregunta_id
-       WHERE p.simulacro_id = $1
-       GROUP BY p.id, p.enunciado, p.tipo_pregunta, p.imagen_url, p.fecha_creacion
-       ${orderClause} ${limitClause}`,
+                    json_agg(
+                            json_build_object(
+                                    'id', o.id,
+                                    'texto_opcion', o.texto_opcion,
+                                    'orden', o.orden
+                            ) ORDER BY ${simulacro.randomizar_opciones ? 'RANDOM()' : 'o.orden'}
+                    ) as opciones
+             FROM preguntas p
+                      JOIN opciones_respuesta o ON p.id = o.pregunta_id
+             WHERE p.simulacro_id = $1
+             GROUP BY p.id, p.enunciado, p.tipo_pregunta, p.imagen_url, p.fecha_creacion
+                 ${orderClause} ${limitClause}`,
             [simulacroId]
         )
 
@@ -157,12 +179,18 @@ const getSimulacroQuestions = async (req, res) => {
                     modo_evaluacion: simulacro.modo_evaluacion,
                     tiempo_limite_minutos: simulacro.tiempo_limite_minutos,
                     tiempo_por_pregunta_segundos: simulacro.tiempo_por_pregunta_segundos,
+                    numero_preguntas: simulacro.numero_preguntas,
+                    intentos_permitidos: simulacro.intentos_permitidos,
+                    randomizar_preguntas: simulacro.randomizar_preguntas,
+                    randomizar_opciones: simulacro.randomizar_opciones,
+                    mostrar_respuestas_despues: simulacro.mostrar_respuestas_despues,
                     curso_titulo: simulacro.curso_titulo
                 },
                 preguntas: preguntasResult.rows,
                 configuracion: {
                     intentosPermitidos: simulacro.intentos_permitidos,
-                    mostrarRespuestasDespues: simulacro.mostrar_respuestas_despues
+                    mostrarRespuestasDespues: simulacro.mostrar_respuestas_despues,
+                    tiempoPorPregunta: simulacro.tiempo_por_pregunta_segundos
                 }
             }
         })
@@ -175,7 +203,6 @@ const getSimulacroQuestions = async (req, res) => {
         })
     }
 }
-
 // =============================================
 // ENVIAR RESPUESTAS Y CALIFICAR
 // =============================================
@@ -187,7 +214,14 @@ const submitSimulacro = async (req, res) => {
 
         const { simulacroId } = req.params
         const { respuestas, tiempoEmpleadoMinutos } = req.body
-        const userId = req.user.id
+        const userId = req.user?.id
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
 
         if (!respuestas || !Array.isArray(respuestas) || respuestas.length === 0) {
             return res.status(400).json({
@@ -198,11 +232,12 @@ const submitSimulacro = async (req, res) => {
 
         // Verificar que el simulacro existe y tiene acceso
         const simulacroCheck = await client.query(
-            `SELECT s.*, c.es_gratuito, i.estado_pago
-      FROM simulacros s
-      JOIN cursos c ON s.curso_id = c.id
-      LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
-      WHERE s.id = $2 AND s.activo = true`,
+            `SELECT s.*, c.es_gratuito, c.titulo as curso_titulo,
+                    COALESCE(i.estado_pago, 'no_inscrito') as estado_pago
+             FROM simulacros s
+                      JOIN cursos c ON s.curso_id = c.id
+                      LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
+             WHERE s.id = $2 AND s.activo = true`,
             [userId, simulacroId]
         )
 
@@ -223,12 +258,12 @@ const submitSimulacro = async (req, res) => {
             })
         }
 
-        // Crear intento
+        // ✅ MEJORADO: Crear intento con timestamp
         const intentoResult = await client.query(
-            `INSERT INTO intentos_simulacro (usuario_id, simulacro_id, tiempo_empleado_minutos, total_preguntas) 
-      VALUES ($1, $2, $3, $4) 
-      RETURNING id`,
-            [userId, simulacroId, tiempoEmpleadoMinutos || null, respuestas.length]
+            `INSERT INTO intentos_simulacro (usuario_id, simulacro_id, tiempo_empleado_minutos, total_preguntas, fecha_intento)
+             VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+                 RETURNING id`,
+            [userId, simulacroId, tiempoEmpleadoMinutos || 0, respuestas.length]
         )
 
         const intentoId = intentoResult.rows[0].id
@@ -247,13 +282,15 @@ const submitSimulacro = async (req, res) => {
                 })
             }
 
-            // Verificar si la respuesta es correcta y obtener detalles
+            // ✅ MEJORADO: Query más robusta para verificar respuesta
             const opcionResult = await client.query(
-                `SELECT o.es_correcta, o.texto_opcion, p.enunciado, p.explicacion
-        FROM opciones_respuesta o
-        JOIN preguntas p ON o.pregunta_id = p.id
-        WHERE o.id = $1 AND p.id = $2`,
-                [opcionSeleccionadaId, preguntaId]
+                `SELECT o.es_correcta, o.texto_opcion, p.enunciado, p.explicacion,
+                        oc.texto_opcion as respuesta_correcta
+                 FROM opciones_respuesta o
+                          JOIN preguntas p ON o.pregunta_id = p.id
+                          LEFT JOIN opciones_respuesta oc ON p.id = oc.pregunta_id AND oc.es_correcta = true
+                 WHERE o.id = $1 AND p.id = $2 AND p.simulacro_id = $3`,
+                [opcionSeleccionadaId, preguntaId, simulacroId]
             )
 
             if (opcionResult.rows.length === 0) {
@@ -271,53 +308,60 @@ const submitSimulacro = async (req, res) => {
 
             // Guardar respuesta del usuario
             await client.query(
-                `INSERT INTO respuestas_usuario (intento_simulacro_id, pregunta_id, opcion_seleccionada_id, es_correcta) 
-        VALUES ($1, $2, $3, $4)`,
+                `INSERT INTO respuestas_usuario (intento_simulacro_id, pregunta_id, opcion_seleccionada_id, es_correcta, fecha_respuesta)
+                 VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)`,
                 [intentoId, preguntaId, opcionSeleccionadaId, esCorrecta]
             )
 
-            // Agregar al detalle (para mostrar después según configuración)
+            // Agregar al detalle
             detalleRespuestas.push({
                 preguntaId,
                 enunciado: opcion.enunciado,
                 respuestaSeleccionada: opcion.texto_opcion,
+                respuestaCorrecta: opcion.respuesta_correcta,
                 esCorrecta,
                 explicacion: opcion.explicacion
             })
         }
 
         // Calcular puntaje
-        const puntaje = (respuestasCorrectas / respuestas.length) * 100
+        const puntaje = Math.round((respuestasCorrectas / respuestas.length) * 100)
 
         // Actualizar intento con resultados
         await client.query(
-            `UPDATE intentos_simulacro 
-      SET puntaje = $1, respuestas_correctas = $2 
-      WHERE id = $3`,
+            `UPDATE intentos_simulacro
+             SET puntaje = $1, respuestas_correctas = $2, completado = true
+             WHERE id = $3`,
             [puntaje, respuestasCorrectas, intentoId]
         )
 
         await client.query('COMMIT')
 
-        // Determinar qué mostrar según el modo de evaluación
-        const mostrarDetalle = simulacro.modo_evaluacion === 'practica'
-        const mostrarRespuestasCorrectas = simulacro.modo_evaluacion !== 'examen'
+        // ✅ MEJORADO: Determinar qué mostrar según el modo
+        const response = {
+            intentoId,
+            puntaje,
+            respuestasCorrectas,
+            totalPreguntas: respuestas.length,
+            tiempoEmpleado: tiempoEmpleadoMinutos,
+            modoEvaluacion: simulacro.modo_evaluacion,
+            estadisticas: {
+                porcentajeAprobacion: puntaje >= 70 ? 'Aprobado' : 'Reprobado',
+                calificacion: puntaje >= 90 ? 'Excelente' : puntaje >= 80 ? 'Muy Bueno' : puntaje >= 70 ? 'Bueno' : puntaje >= 60 ? 'Regular' : 'Necesita Mejorar'
+            }
+        }
+
+        // Agregar detalle según el modo
+        if (simulacro.modo_evaluacion === 'practica') {
+            response.detalle = detalleRespuestas
+        } else if (simulacro.modo_evaluacion === 'realista') {
+            response.resumen = `${respuestasCorrectas}/${respuestas.length} correctas`
+        }
 
         res.json({
             success: true,
             message: 'Simulacro completado exitosamente',
-            data: {
-                intentoId,
-                puntaje: parseFloat(puntaje.toFixed(2)),
-                respuestasCorrectas,
-                totalPreguntas: respuestas.length,
-                tiempoEmpleado: tiempoEmpleadoMinutos,
-                modoEvaluacion: simulacro.modo_evaluacion,
-                ...(mostrarDetalle && { detalle: detalleRespuestas }),
-                ...(mostrarRespuestasCorrectas && !mostrarDetalle && {
-                    resumen: `${respuestasCorrectas}/${respuestas.length} correctas`
-                })
-            }
+            data: response
         })
 
     } catch (error) {
@@ -332,32 +376,39 @@ const submitSimulacro = async (req, res) => {
     }
 }
 
-// =============================================
-// MIS INTENTOS DE SIMULACRO
-// =============================================
 const getMyAttempts = async (req, res) => {
     try {
-        const userId = req.user.id
-        const { simulacroId, cursoId } = req.query
+        const userId = req.user?.id
 
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
+
+        const { simulacroId, cursoId, page = 1, limit = 20 } = req.query
+
+        // ✅ CORREGIDO: Usar puntaje IS NOT NULL en lugar de completado = true
         let query = `
-     SELECT ia.*, s.titulo as simulacro_titulo, s.modo_evaluacion,
-       c.titulo as curso_titulo, c.id as curso_id
-     FROM intentos_simulacro ia
-     JOIN simulacros s ON ia.simulacro_id = s.id
-     JOIN cursos c ON s.curso_id = c.id
-     WHERE ia.usuario_id = $1
-   `
+            SELECT ia.*, s.titulo as simulacro_titulo, s.modo_evaluacion,
+                   c.titulo as curso_titulo, c.id as curso_id
+            FROM intentos_simulacro ia
+                     JOIN simulacros s ON ia.simulacro_id = s.id
+                     JOIN cursos c ON s.curso_id = c.id
+            WHERE ia.usuario_id = $1 AND ia.puntaje IS NOT NULL
+        `
         const params = [userId]
         let paramCount = 1
 
-        if (simulacroId) {
+        // Agregar filtros opcionales
+        if (simulacroId && simulacroId.trim() !== '') {
             paramCount++
             query += ` AND ia.simulacro_id = $${paramCount}`
             params.push(simulacroId)
         }
 
-        if (cursoId) {
+        if (cursoId && cursoId.trim() !== '') {
             paramCount++
             query += ` AND c.id = $${paramCount}`
             params.push(cursoId)
@@ -365,21 +416,128 @@ const getMyAttempts = async (req, res) => {
 
         query += ' ORDER BY ia.fecha_intento DESC'
 
+        // Paginación
+        const pageNum = Math.max(1, parseInt(page) || 1)
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20))
+        const offset = (pageNum - 1) * limitNum
+
+        query += ` LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`
+        params.push(limitNum, offset)
+
+        console.log('Query ejecutándose:', query)
+        console.log('Params:', params)
+
         const result = await pool.query(query, params)
+
+        // ✅ CORREGIDO: Query de estadísticas también sin completado
+        let statsQuery = `
+            SELECT 
+                COUNT(*) as total_intentos,
+                COALESCE(AVG(puntaje), 0) as promedio_puntaje,
+                COALESCE(MAX(puntaje), 0) as mejor_puntaje,
+                COALESCE(MIN(puntaje), 0) as peor_puntaje,
+                COALESCE(AVG(tiempo_empleado_minutos), 0) as tiempo_promedio
+            FROM intentos_simulacro ia
+            JOIN simulacros s ON ia.simulacro_id = s.id
+            JOIN cursos c ON s.curso_id = c.id
+            WHERE ia.usuario_id = $1 AND ia.puntaje IS NOT NULL
+        `
+        const statsParams = [userId]
+        let statsParamCount = 1
+
+        if (simulacroId && simulacroId.trim() !== '') {
+            statsParamCount++
+            statsQuery += ` AND ia.simulacro_id = $${statsParamCount}`
+            statsParams.push(simulacroId)
+        }
+
+        if (cursoId && cursoId.trim() !== '') {
+            statsParamCount++
+            statsQuery += ` AND c.id = $${statsParamCount}`
+            statsParams.push(cursoId)
+        }
+
+        const statsResult = await pool.query(statsQuery, statsParams)
+        const stats = statsResult.rows[0]
+
+        // Query para contar total (para paginación correcta)
+        let countQuery = `
+            SELECT COUNT(*) as total_records
+            FROM intentos_simulacro ia
+                     JOIN simulacros s ON ia.simulacro_id = s.id
+                     JOIN cursos c ON s.curso_id = c.id
+            WHERE ia.usuario_id = $1 AND ia.puntaje IS NOT NULL
+        `
+        const countParams = [userId]
+        let countParamCount = 1
+
+        if (simulacroId && simulacroId.trim() !== '') {
+            countParamCount++
+            countQuery += ` AND ia.simulacro_id = $${countParamCount}`
+            countParams.push(simulacroId)
+        }
+
+        if (cursoId && cursoId.trim() !== '') {
+            countParamCount++
+            countQuery += ` AND c.id = $${countParamCount}`
+            countParams.push(cursoId)
+        }
+
+        const countResult = await pool.query(countQuery, countParams)
+        const totalRecords = parseInt(countResult.rows[0].total_records) || 0
+
+        // Formatear datos de respuesta con valores seguros
+        const intentos = result.rows.map(row => ({
+            id: row.id,
+            usuario_id: row.usuario_id,
+            simulacro_id: row.simulacro_id,
+            puntaje: row.puntaje ? parseFloat(row.puntaje) : 0,
+            total_preguntas: parseInt(row.total_preguntas) || 0,
+            respuestas_correctas: parseInt(row.respuestas_correctas) || 0,
+            tiempo_empleado_minutos: parseInt(row.tiempo_empleado_minutos) || 0,
+            fecha_intento: row.fecha_intento,
+            simulacro_titulo: row.simulacro_titulo,
+            modo_evaluacion: row.modo_evaluacion,
+            curso_titulo: row.curso_titulo,
+            curso_id: row.curso_id
+        }))
 
         res.json({
             success: true,
-            data: { intentos: result.rows }
+            data: {
+                intentos,
+                estadisticas: {
+                    total_intentos: parseInt(stats.total_intentos) || 0,
+                    promedio_puntaje: stats.promedio_puntaje ? parseFloat(stats.promedio_puntaje).toFixed(1) : '0.0',
+                    mejor_puntaje: stats.mejor_puntaje ? parseFloat(stats.mejor_puntaje) : 0,
+                    peor_puntaje: stats.peor_puntaje ? parseFloat(stats.peor_puntaje) : 0,
+                    tiempo_promedio: stats.tiempo_promedio ? Math.round(parseFloat(stats.tiempo_promedio)) : 0
+                },
+                pagination: {
+                    page: pageNum,
+                    limit: limitNum,
+                    total_records: totalRecords,
+                    total_pages: Math.ceil(totalRecords / limitNum),
+                    has_next: pageNum < Math.ceil(totalRecords / limitNum),
+                    has_prev: pageNum > 1
+                }
+            }
         })
 
     } catch (error) {
         console.error('Error obteniendo intentos:', error)
+        console.error('Error stack:', error.stack)
         res.status(500).json({
             success: false,
-            message: 'Error interno del servidor'
+            message: 'Error interno del servidor',
+            ...(process.env.NODE_ENV === 'development' && {
+                error: error.message,
+                stack: error.stack
+            })
         })
     }
 }
+
 
 // =============================================
 // VER DETALLE DE INTENTO ESPECÍFICO
@@ -389,21 +547,21 @@ const getAttemptDetail = async (req, res) => {
         const { intentoId } = req.params
         const userId = req.user.id
 
-        // Obtener intento con información del simulacro
+        // ✅ CORREGIDO: Usar puntaje IS NOT NULL
         const intentoResult = await pool.query(
             `SELECT ia.*, s.titulo as simulacro_titulo, s.modo_evaluacion, s.mostrar_respuestas_despues,
-       c.titulo as curso_titulo
-      FROM intentos_simulacro ia
-      JOIN simulacros s ON ia.simulacro_id = s.id
-      JOIN cursos c ON s.curso_id = c.id
-      WHERE ia.id = $1 AND ia.usuario_id = $2`,
+                    c.titulo as curso_titulo
+             FROM intentos_simulacro ia
+                      JOIN simulacros s ON ia.simulacro_id = s.id
+                      JOIN cursos c ON s.curso_id = c.id
+             WHERE ia.id = $1 AND ia.usuario_id = $2 AND ia.puntaje IS NOT NULL`,
             [intentoId, userId]
         )
 
         if (intentoResult.rows.length === 0) {
             return res.status(404).json({
                 success: false,
-                message: 'Intento no encontrado'
+                message: 'Intento no encontrado o no completado'
             })
         }
 
@@ -412,33 +570,38 @@ const getAttemptDetail = async (req, res) => {
         // Verificar si puede ver el detalle según la configuración
         const puedeVerDetalle = intento.modo_evaluacion === 'practica'
 
-        let detalle = null
+        let respuestas = null
         if (puedeVerDetalle) {
             // Obtener respuestas detalladas
             const detalleResult = await pool.query(
                 `SELECT ru.*, p.enunciado, p.explicacion, p.imagen_url,
-         o.texto_opcion as respuesta_seleccionada,
-         oc.texto_opcion as respuesta_correcta
-        FROM respuestas_usuario ru
-        JOIN preguntas p ON ru.pregunta_id = p.id
-        JOIN opciones_respuesta o ON ru.opcion_seleccionada_id = o.id
-        JOIN opciones_respuesta oc ON p.id = oc.pregunta_id AND oc.es_correcta = true
-        WHERE ru.intento_simulacro_id = $1
-        ORDER BY ru.fecha_respuesta`,
+                        o.texto_opcion as respuesta_seleccionada,
+                        oc.texto_opcion as respuesta_correcta
+                 FROM respuestas_usuario ru
+                          JOIN preguntas p ON ru.pregunta_id = p.id
+                          JOIN opciones_respuesta o ON ru.opcion_seleccionada_id = o.id
+                          JOIN opciones_respuesta oc ON p.id = oc.pregunta_id AND oc.es_correcta = true
+                 WHERE ru.intento_simulacro_id = $1
+                 ORDER BY ru.fecha_respuesta`,
                 [intentoId]
             )
 
-            detalle = detalleResult.rows
+            respuestas = detalleResult.rows
         }
 
         res.json({
             success: true,
             data: {
                 intento,
-                ...(puedeVerDetalle && { detalle }),
-                ...(intento.modo_evaluacion === 'examen' && {
-                    mensaje: 'Detalle no disponible para exámenes'
-                })
+                respuestas,
+                analisis: {
+                    comentario: `Has obtenido un ${intento.puntaje}% en este simulacro.`
+                },
+                recomendaciones: intento.puntaje < 70 ? [
+                    'Revisa los temas donde tuviste más errores',
+                    'Practica más simulacros del mismo tipo',
+                    'Consulta el material de estudio del curso'
+                ] : []
             }
         })
 

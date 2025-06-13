@@ -269,3 +269,7 @@ CREATE TABLE public.respuestas_usuario (
 	CONSTRAINT respuestas_usuario_opcion_seleccionada_id_fkey FOREIGN KEY (opcion_seleccionada_id) REFERENCES public.opciones_respuesta(id) ON DELETE CASCADE ON UPDATE CASCADE,
 	CONSTRAINT respuestas_usuario_pregunta_id_fkey FOREIGN KEY (pregunta_id) REFERENCES public.preguntas(id) ON DELETE CASCADE ON UPDATE CASCADE
 );
+
+
+ALTER TABLE intentos_simulacro ADD COLUMN completado BOOLEAN DEFAULT false;
+UPDATE intentos_simulacro SET completado = true WHERE puntaje IS NOT NULL;

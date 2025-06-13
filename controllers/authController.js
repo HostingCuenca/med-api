@@ -136,6 +136,116 @@ const login = async (req, res) => {
     }
 }
 
+const updateProfile = async (req, res) => {
+    try {
+        const { nombreCompleto, nombreUsuario, telefono } = req.body
+        const userId = req.user.id
+
+        // Verificar si nombre de usuario ya existe (si se está cambiando)
+        if (nombreUsuario) {
+            const existingUser = await pool.query(
+                'SELECT id FROM perfiles_usuario WHERE nombre_usuario = $1 AND id != $2',
+                [nombreUsuario, userId]
+            )
+
+            if (existingUser.rows.length > 0) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'El nombre de usuario ya está en uso'
+                })
+            }
+        }
+
+        const result = await pool.query(
+            `UPDATE perfiles_usuario 
+             SET nombre_completo = COALESCE($1, nombre_completo),
+                 nombre_usuario = COALESCE($2, nombre_usuario),
+                 telefono = COALESCE($3, telefono)
+             WHERE id = $4
+             RETURNING id, email, nombre_completo, nombre_usuario, telefono, tipo_usuario, fecha_registro`,
+            [nombreCompleto, nombreUsuario, telefono, userId]
+        )
+
+        res.json({
+            success: true,
+            message: 'Perfil actualizado exitosamente',
+            data: { user: result.rows[0] }
+        })
+
+    } catch (error) {
+        console.error('Error actualizando perfil:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
+// CAMBIAR CONTRASEÑA
+// =============================================
+const changePassword = async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body
+        const userId = req.user.id
+
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'Contraseña actual y nueva son requeridas'
+            })
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({
+                success: false,
+                message: 'La nueva contraseña debe tener al menos 6 caracteres'
+            })
+        }
+
+        // Obtener contraseña actual
+        const userResult = await pool.query(
+            'SELECT password_hash FROM perfiles_usuario WHERE id = $1',
+            [userId]
+        )
+
+        if (userResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Usuario no encontrado'
+            })
+        }
+
+        // Verificar contraseña actual
+        const isValidPassword = await bcrypt.compare(currentPassword, userResult.rows[0].password_hash)
+        if (!isValidPassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'La contraseña actual es incorrecta'
+            })
+        }
+
+        // Hash nueva contraseña y actualizar
+        const hashedNewPassword = await bcrypt.hash(newPassword, 12)
+        await pool.query(
+            'UPDATE perfiles_usuario SET password_hash = $1 WHERE id = $2',
+            [hashedNewPassword, userId]
+        )
+
+        res.json({
+            success: true,
+            message: 'Contraseña cambiada exitosamente'
+        })
+
+    } catch (error) {
+        console.error('Error cambiando contraseña:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
 // =============================================
 // PERFIL
 // =============================================
@@ -167,4 +277,4 @@ const getProfile = async (req, res) => {
     }
 }
 
-module.exports = { register, login, getProfile }
+module.exports = { register, login, getProfile, updateProfile, changePassword }
