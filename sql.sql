@@ -273,3 +273,59 @@ CREATE TABLE public.respuestas_usuario (
 
 ALTER TABLE intentos_simulacro ADD COLUMN completado BOOLEAN DEFAULT false;
 UPDATE intentos_simulacro SET completado = true WHERE puntaje IS NOT NULL;
+
+
+
+-- 1. EXPANDIR tabla preguntas (agregar solo campos críticos)
+ALTER TABLE preguntas ADD COLUMN IF NOT EXISTS configuracion JSONB DEFAULT '{}';
+ALTER TABLE preguntas ADD COLUMN IF NOT EXISTS puntaje_maximo DECIMAL(5,2) DEFAULT 1.0;
+ALTER TABLE preguntas ADD COLUMN IF NOT EXISTS metadatos JSONB DEFAULT '{}';
+
+-- 2. EXPANDIR opciones_respuesta (agregar puntaje parcial)
+ALTER TABLE opciones_respuesta ADD COLUMN IF NOT EXISTS puntaje_parcial DECIMAL(3,2) DEFAULT 0;
+ALTER TABLE opciones_respuesta ADD COLUMN IF NOT EXISTS metadatos JSONB DEFAULT '{}';
+
+-- 3. EXPANDIR respuestas_usuario (para respuestas de texto libre)
+ALTER TABLE respuestas_usuario ADD COLUMN IF NOT EXISTS respuesta_texto TEXT;
+ALTER TABLE respuestas_usuario ADD COLUMN IF NOT EXISTS puntaje_obtenido DECIMAL(5,2);
+ALTER TABLE respuestas_usuario ADD COLUMN IF NOT EXISTS metadatos JSONB DEFAULT '{}';
+
+-- 4. NUEVA tabla para preguntas complejas (opcional)
+CREATE TABLE IF NOT EXISTS elementos_pregunta (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    pregunta_id UUID REFERENCES preguntas(id) ON DELETE CASCADE,
+    tipo_elemento TEXT NOT NULL, -- 'concepto', 'definicion', 'formula', 'variable'
+    contenido TEXT NOT NULL,
+    posicion INTEGER DEFAULT 0,
+    es_correcto BOOLEAN DEFAULT false,
+    metadatos JSONB DEFAULT '{}'
+);
+
+
+
+-- Actualización de tabla simulacros
+ALTER TABLE simulacros ADD COLUMN modo_estudio VARCHAR(20) DEFAULT 'estudio';
+-- 'estudio', 'revision', 'evaluacion', 'examen_real'
+
+ALTER TABLE simulacros ADD COLUMN tipo_tiempo VARCHAR(20) DEFAULT 'sin_limite';
+-- 'sin_limite', 'por_pregunta', 'global'
+
+ALTER TABLE simulacros ADD COLUMN tipo_navegacion VARCHAR(20) DEFAULT 'libre';
+-- 'libre', 'secuencial'
+
+ALTER TABLE simulacros ADD COLUMN configuracion_modo JSONB DEFAULT '{}';
+-- Configuraciones específicas del modo
+
+
+-- Agregar nuevos campos para los 4 modos de simulacro
+ALTER TABLE simulacros ADD COLUMN IF NOT EXISTS modo_estudio VARCHAR(20) DEFAULT 'estudio';
+-- 'estudio', 'revision', 'evaluacion', 'examen_real'
+
+ALTER TABLE simulacros ADD COLUMN IF NOT EXISTS tipo_tiempo VARCHAR(20) DEFAULT 'sin_limite';
+-- 'sin_limite', 'por_pregunta', 'global'
+
+ALTER TABLE simulacros ADD COLUMN IF NOT EXISTS tipo_navegacion VARCHAR(20) DEFAULT 'libre';
+-- 'libre', 'secuencial'
+
+ALTER TABLE simulacros ADD COLUMN IF NOT EXISTS configuracion_avanzada JSONB DEFAULT '{}';
+-- Configuraciones específicas del modo
