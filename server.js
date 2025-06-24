@@ -83,8 +83,9 @@ app.use('*', (req, res) => {
         ]
     })
 })
+app.listen(PORT, '0.0.0.0', () => {
 
-app.listen(PORT, () => {
+// app.listen(PORT, () => {
     console.log(`🚀 Servidor Mediconsa corriendo en puerto ${PORT}`)
     console.log(`📍 URL: http://localhost:${PORT}`)
     console.log(`🔐 Auth: http://localhost:${PORT}/med-api/auth`)
