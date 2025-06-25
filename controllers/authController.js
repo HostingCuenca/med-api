@@ -121,7 +121,8 @@ const login = async (req, res) => {
                     email: user.email,
                     nombreCompleto: user.nombre_completo,
                     nombreUsuario: user.nombre_usuario,
-                    tipoUsuario: user.tipo_usuario
+                    tipoUsuario: user.tipo_usuario,
+                    telefono: user.telefono,
                 },
                 token
             }
@@ -252,7 +253,8 @@ const changePassword = async (req, res) => {
 const getProfile = async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT id, email, nombre_completo, nombre_usuario, tipo_usuario, activo, fecha_registro FROM perfiles_usuario WHERE id = $1',
+            'SELECT id, email, nombre_completo, nombre_usuario, telefono, tipo_usuario, activo, fecha_registro FROM perfiles_usuario WHERE id = $1',
+            //                                                    ^^^^^^^^ AGREGAR ESTE CAMPO
             [req.user.id]
         )
 
@@ -265,7 +267,7 @@ const getProfile = async (req, res) => {
 
         res.json({
             success: true,
-            data: { user: result.rows[0] }
+            data: { user: result.rows[0] } // ✅ Ahora incluirá telefono
         })
 
     } catch (error) {
