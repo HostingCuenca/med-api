@@ -151,21 +151,45 @@ const corsOptionsSecure = {
 }
 
 // =====================================================
-// MIDDLEWARE GENERAL
+// MIDDLEWARE CORS SUPER PERMISIVO (TEMPORAL)
 // =====================================================
-app.use(cors(corsOptions))
-app.use(express.json({ limit: '10mb' }))
-app.use(express.urlencoded({ extended: true, limit: '10mb' }))
 
-// Middleware de logging para debug
+// CORS Manual - Más agresivo
 app.use((req, res, next) => {
+    // Permitir TODOS los orígenes
+    res.header('Access-Control-Allow-Origin', req.headers.origin || '*')
+
+    // Permitir TODOS los headers
+    res.header('Access-Control-Allow-Headers',
+        'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Access-Token, Cache-Control'
+    )
+
+    // Permitir TODOS los métodos
+    res.header('Access-Control-Allow-Methods',
+        'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD'
+    )
+
+    // Permitir credentials
+    res.header('Access-Control-Allow-Credentials', 'true')
+
+    // Manejar preflight requests
+    if (req.method === 'OPTIONS') {
+        console.log('🔄 Preflight request from:', req.headers.origin)
+        return res.status(200).end()
+    }
+
     console.log(`${req.method} ${req.path} - Origin: ${req.get('origin')}`)
     next()
 })
 
-// Headers adicionales de seguridad
+// Aplicar CORS del módulo también (doble protección)
+app.use(cors(corsOptions))
+
+app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true, limit: '10mb' }))
+
+// Headers adicionales
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Credentials', 'true')
     res.header('X-Powered-By', 'Mediconsa Academy')
     next()
 })
