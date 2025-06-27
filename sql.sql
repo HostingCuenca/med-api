@@ -647,3 +647,70 @@ ALTER COLUMN opcion_seleccionada_id DROP NOT NULL;
 
 ALTER TABLE respuestas_usuario
 ALTER COLUMN es_correcta DROP NOT NULL;
+
+
+CREATE TABLE public.clases_virtuales (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    titulo text NOT NULL,
+    descripcion text NULL,
+    curso_id uuid NOT NULL, -- IGUAL que simulacros
+
+    -- Datos de la reunión
+    plataforma varchar(20) NOT NULL, -- 'zoom', 'meet'
+    link_reunion text NOT NULL, -- IGUAL que materiales: solo el link
+
+    -- Programación
+    fecha_programada timestamptz NOT NULL,
+    duracion_minutos int4 DEFAULT 60,
+
+    -- Control simple
+    activa bool DEFAULT true NOT NULL,
+    fecha_creacion timestamp(3) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    creada_por uuid NOT NULL, -- instructor/admin
+
+    CONSTRAINT clases_virtuales_pkey PRIMARY KEY (id),
+    CONSTRAINT clases_virtuales_curso_id_fkey FOREIGN KEY (curso_id) REFERENCES public.cursos(id) ON DELETE CASCADE,
+    CONSTRAINT clases_virtuales_creada_por_fkey FOREIGN KEY (creada_por) REFERENCES public.perfiles_usuario(id),
+    CONSTRAINT check_plataforma CHECK (plataforma IN ('zoom', 'meet', 'teams'))
+);
+
+CREATE TABLE public.canales_curso (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    nombre text NOT NULL,
+    curso_id uuid NOT NULL, -- IGUAL que simulacros y materiales
+
+    -- Canal (principalmente WhatsApp)
+    tipo_canal varchar(20) DEFAULT 'whatsapp',
+    link_acceso text NOT NULL, -- IGUAL que materiales: solo el link
+    descripcion text NULL,
+
+    -- Control
+    activo bool DEFAULT true NOT NULL,
+    fecha_creacion timestamp(3) DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    creado_por uuid NOT NULL,
+
+    CONSTRAINT canales_curso_pkey PRIMARY KEY (id),
+    CONSTRAINT canales_curso_curso_id_fkey FOREIGN KEY (curso_id) REFERENCES public.cursos(id) ON DELETE CASCADE,
+    CONSTRAINT canales_curso_creado_por_fkey FOREIGN KEY (creado_por) REFERENCES public.perfiles_usuario(id)
+);
+
+
+
+ALTER TABLE materiales ADD COLUMN tipo_material VARCHAR(20) DEFAULT 'curso';
+-- 'curso', 'libre', 'premium'
+
+ALTER TABLE materiales ADD COLUMN imagen_url TEXT;
+ALTER TABLE materiales ADD COLUMN categoria VARCHAR(50);
+ALTER TABLE materiales ADD COLUMN stock_disponible INTEGER DEFAULT -1; -- -1 = ilimitado
+ALTER TABLE materiales ADD COLUMN visible_publico BOOLEAN DEFAULT false;
+
+
+CREATE TABLE carrito_temporal (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    session_id VARCHAR(255) NOT NULL, -- para usuarios no logueados
+    usuario_id UUID NULL, -- para usuarios logueados
+    material_id UUID NOT NULL,
+    cantidad INTEGER DEFAULT 1,
+    fecha_agregado TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (material_id) REFERENCES materiales(id) ON DELETE CASCADE
+);
