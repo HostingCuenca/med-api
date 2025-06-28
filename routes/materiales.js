@@ -11,7 +11,7 @@ const {
     addToCart,
     getCart,
     removeFromCart,
-    clearCart
+    clearCart, getMaterialForEdit, updateMaterial, deleteMaterials
 } = require('../controllers/materialesController')
 const { authenticateToken } = require('../middleware/auth')
 
@@ -44,6 +44,31 @@ router.get('/course/:cursoId',
 router.get('/my-materials',
     authenticateToken,
     getMisMateriales
+)
+
+
+
+router.get('/:materialId/edit',
+    authenticateToken,
+    getMaterialForEdit
+)
+
+// Actualizar material existente
+router.put('/:materialId',
+    authenticateToken,
+    updateMaterial
+)
+
+// // Eliminar material individual
+// router.delete('/:materialId',
+//     authenticateToken,
+//     deleteMaterial
+// )
+
+// Eliminación masiva de materiales (solo admin)
+router.delete('/bulk/delete',
+    authenticateToken,
+    deleteMaterials
 )
 
 // ==================== CARRITO SIMBÓLICO ====================

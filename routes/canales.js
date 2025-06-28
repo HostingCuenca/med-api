@@ -5,6 +5,7 @@ const {
     getCanalesByCourse,
     getMisCanales,
     getCanalDetail,
+    updateCanal,
     createCanal
 } = require('../controllers/canalesComunicacionController')
 const { authenticateToken } = require('../middleware/auth')
@@ -44,6 +45,11 @@ router.get('/:canalId/detail',
 router.post('/create',
     authenticateToken,
     createCanal
+)
+
+router.put('/:canalId',
+    authenticateToken,
+    updateCanal
 )
 
 // ==================== MIDDLEWARE DE MANEJO DE ERRORES ====================

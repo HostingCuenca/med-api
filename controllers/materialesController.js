@@ -462,6 +462,161 @@ const createMaterial = async (req, res) => {
 }
 
 // =============================================
+// ACTUALIZAR MATERIAL (ADMIN/INSTRUCTOR)
+// =============================================
+const updateMaterial = async (req, res) => {
+    try {
+        const { materialId } = req.params
+        const userId = req.user?.id
+        const {
+            titulo, descripcion, archivoUrl, tipoArchivo, precio,
+            esGratuito, tipoMaterial, categoria, stockDisponible,
+            visiblePublico, imagenUrl
+        } = req.body
+
+        console.log('✏️ Actualizando material:', materialId)
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
+
+        // Verificar que el material existe
+        const materialCheck = await pool.query(
+            'SELECT * FROM materiales WHERE id = $1',
+            [materialId]
+        )
+
+        if (materialCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Material no encontrado'
+            })
+        }
+
+        const material = materialCheck.rows[0]
+
+        // Verificar permisos
+        if (material.curso_id) {
+            // Material de curso - verificar permisos
+            const permisoCheck = await pool.query(
+                `SELECT u.tipo_usuario, c.instructor_id
+                 FROM perfiles_usuario u, cursos c
+                 WHERE u.id = $1 AND c.id = $2`,
+                [userId, material.curso_id]
+            )
+
+            if (permisoCheck.rows.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No tienes permisos para editar este material'
+                })
+            }
+
+            const { tipo_usuario, instructor_id } = permisoCheck.rows[0]
+            const puedeEditar = tipo_usuario === 'admin' || instructor_id === userId
+
+            if (!puedeEditar) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'No tienes permisos para editar materiales de este curso'
+                })
+            }
+        } else {
+            // Material independiente - solo admin
+            const userCheck = await pool.query(
+                'SELECT tipo_usuario FROM perfiles_usuario WHERE id = $1',
+                [userId]
+            )
+
+            if (userCheck.rows[0]?.tipo_usuario !== 'admin') {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Solo administradores pueden editar materiales independientes'
+                })
+            }
+        }
+
+        // Construir query dinámico solo con campos que se envían
+        const updates = []
+        const values = []
+        let paramCount = 0
+
+        const fieldsToUpdate = {
+            titulo,
+            descripcion,
+            archivo_url: archivoUrl,
+            tipo_archivo: tipoArchivo,
+            precio,
+            es_gratuito: esGratuito,
+            tipo_material: tipoMaterial,
+            categoria,
+            stock_disponible: stockDisponible,
+            visible_publico: visiblePublico,
+            imagen_url: imagenUrl
+        }
+
+        // Solo actualizar campos que se enviaron
+        Object.entries(fieldsToUpdate).forEach(([key, value]) => {
+            if (value !== undefined) {
+                paramCount++
+                updates.push(`${key} = $${paramCount}`)
+                values.push(value)
+            }
+        })
+
+        if (updates.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No se enviaron campos para actualizar'
+            })
+        }
+
+        // Solo actualizar fecha_creacion si es necesario (comentado por ahora)
+        // paramCount++
+        // updates.push(`fecha_actualizacion = ${paramCount}`)
+        // values.push(new Date())
+
+        // Agregar ID del material al final
+        paramCount++
+        values.push(materialId)
+
+        const query = `
+            UPDATE materiales
+            SET ${updates.join(', ')}
+            WHERE id = $${paramCount}
+                RETURNING *
+        `
+
+        const result = await pool.query(query, values)
+
+        console.log('✅ Material actualizado exitosamente:', materialId)
+
+        res.json({
+            success: true,
+            message: 'Material actualizado exitosamente',
+            data: {
+                material: {
+                    ...result.rows[0],
+                    precio: parseFloat(result.rows[0].precio) || 0,
+                    tipo_display: getTipoMaterialDisplay(result.rows[0].tipo_material),
+                    archivo_extension: getFileExtension(result.rows[0].archivo_url)
+                }
+            }
+        })
+
+    } catch (error) {
+        console.error('Error actualizando material:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
 // CARRITO SIMBÓLICO - AGREGAR ITEM
 // =============================================
 const addToCart = async (req, res) => {
@@ -541,6 +696,184 @@ const addToCart = async (req, res) => {
 
     } catch (error) {
         console.error('Error agregando al carrito:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+const deleteMaterials = async (req, res) => {
+    try {
+        const { materialIds } = req.body
+        const userId = req.user?.id
+
+        console.log('🗑️ Eliminación masiva de materiales:', materialIds?.length)
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
+
+        // Solo admin puede hacer eliminación masiva
+        const userCheck = await pool.query(
+            'SELECT tipo_usuario FROM perfiles_usuario WHERE id = $1',
+            [userId]
+        )
+
+        if (userCheck.rows[0]?.tipo_usuario !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'Solo administradores pueden realizar eliminación masiva'
+            })
+        }
+
+        if (!materialIds || !Array.isArray(materialIds) || materialIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Lista de IDs de materiales es requerida'
+            })
+        }
+
+        // Verificar cuáles materiales existen
+        const materialesCheck = await pool.query(
+            'SELECT id, titulo FROM materiales WHERE id = ANY($1)',
+            [materialIds]
+        )
+
+        const materialesExistentes = materialesCheck.rows
+        const idsExistentes = materialesExistentes.map(m => m.id)
+
+        if (materialesExistentes.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'No se encontraron materiales válidos para eliminar'
+            })
+        }
+
+        // Limpiar items del carrito que referencien estos materiales
+        const carritoCleanup = await pool.query(
+            'DELETE FROM carrito_temporal WHERE material_id = ANY($1)',
+            [idsExistentes]
+        )
+
+        // Eliminar materiales
+        const result = await pool.query(
+            'DELETE FROM materiales WHERE id = ANY($1) RETURNING id, titulo, tipo_material',
+            [idsExistentes]
+        )
+
+        const eliminados = result.rows.length
+        const itemsCarritoRemovidos = carritoCleanup.rowCount || 0
+
+        console.log(`✅ Eliminación masiva completada: ${eliminados} materiales, ${itemsCarritoRemovidos} items de carrito`)
+
+        res.json({
+            success: true,
+            message: `${eliminados} materiales eliminados exitosamente`,
+            data: {
+                materiales_eliminados: result.rows,
+                total_eliminados: eliminados,
+                total_solicitados: materialIds.length,
+                items_carrito_removidos: itemsCarritoRemovidos,
+                no_encontrados: materialIds.filter(id => !idsExistentes.includes(id))
+            }
+        })
+
+    } catch (error) {
+        console.error('Error en eliminación masiva:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
+// OBTENER MATERIAL PARA EDICIÓN (ADMIN/INSTRUCTOR)
+// =============================================
+const getMaterialForEdit = async (req, res) => {
+    try {
+        const { materialId } = req.params
+        const userId = req.user?.id
+
+        console.log('📝 Obteniendo material para editar:', materialId)
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
+
+        // Obtener material con información de curso
+        const result = await pool.query(
+            `SELECT m.*, c.titulo as curso_titulo, c.instructor_id
+             FROM materiales m
+             LEFT JOIN cursos c ON m.curso_id = c.id
+             WHERE m.id = $1`,
+            [materialId]
+        )
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Material no encontrado'
+            })
+        }
+
+        const material = result.rows[0]
+
+        // Verificar permisos
+        let puedeEditar = false
+        const userTypeResult = await pool.query(
+            'SELECT tipo_usuario FROM perfiles_usuario WHERE id = $1',
+            [userId]
+        )
+
+        const tipoUsuario = userTypeResult.rows[0]?.tipo_usuario
+
+        if (tipoUsuario === 'admin') {
+            puedeEditar = true
+        } else if (material.instructor_id === userId) {
+            puedeEditar = true
+        }
+
+        if (!puedeEditar) {
+            return res.status(403).json({
+                success: false,
+                message: 'No tienes permisos para editar este material'
+            })
+        }
+
+        // Obtener categorías disponibles para el formulario
+        const categoriasResult = await pool.query(
+            `SELECT categoria, COUNT(*) as cantidad 
+             FROM materiales 
+             WHERE categoria IS NOT NULL 
+             GROUP BY categoria 
+             ORDER BY cantidad DESC`
+        )
+
+        res.json({
+            success: true,
+            data: {
+                material: {
+                    ...material,
+                    precio: parseFloat(material.precio) || 0,
+                    tipo_display: getTipoMaterialDisplay(material.tipo_material),
+                    archivo_extension: getFileExtension(material.archivo_url)
+                },
+                categorias_disponibles: categoriasResult.rows.map(c => c.categoria),
+                puede_editar: puedeEditar,
+                es_admin: tipoUsuario === 'admin'
+            }
+        })
+
+    } catch (error) {
+        console.error('Error obteniendo material para editar:', error)
         res.status(500).json({
             success: false,
             message: 'Error interno del servidor'
@@ -901,6 +1234,10 @@ module.exports = {
     createMaterial,
     generateWhatsAppLink,
     // Carrito simbólico
+    updateMaterial,
+
+    deleteMaterials,
+    getMaterialForEdit,
     addToCart,
     getCart,
     removeFromCart,

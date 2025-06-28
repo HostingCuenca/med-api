@@ -82,6 +82,138 @@ const getClasesVirtualesByCourse = async (req, res) => {
     }
 }
 
+
+// =============================================
+// ACTUALIZAR CLASE VIRTUAL (SOLO ADMIN/INSTRUCTOR)
+// =============================================
+const updateClaseVirtual = async (req, res) => {
+    try {
+        const userId = req.user?.id
+        const { claseId } = req.params
+        const { titulo, descripcion, plataforma, linkReunion, fechaProgramada, duracionMinutos } = req.body
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
+
+        // Verificar que la clase existe y permisos
+        const permisoCheck = await pool.query(
+            `SELECT cv.*, u.tipo_usuario, c.instructor_id
+             FROM clases_virtuales cv
+                      JOIN cursos c ON cv.curso_id = c.id
+                      JOIN perfiles_usuario u ON u.id = $1
+             WHERE cv.id = $2 AND cv.activa = true`,
+            [userId, claseId]
+        )
+
+        if (permisoCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Clase virtual no encontrada'
+            })
+        }
+
+        const { tipo_usuario, instructor_id, creada_por } = permisoCheck.rows[0]
+        const puedeEditar = tipo_usuario === 'admin' || instructor_id === userId || creada_por === userId
+
+        if (!puedeEditar) {
+            return res.status(403).json({
+                success: false,
+                message: 'No tienes permisos para editar esta clase virtual'
+            })
+        }
+
+        // Actualizar clase virtual (SIN actualizada_en porque no existe)
+        const result = await pool.query(
+            `UPDATE clases_virtuales
+             SET titulo = $1, descripcion = $2, plataforma = $3, link_reunion = $4,
+                 fecha_programada = $5, duracion_minutos = $6
+             WHERE id = $7
+                 RETURNING *`,
+            [titulo, descripcion, plataforma, linkReunion, fechaProgramada, duracionMinutos || 60, claseId]
+        )
+
+        res.json({
+            success: true,
+            message: 'Clase virtual actualizada exitosamente',
+            data: result.rows[0]
+        })
+
+    } catch (error) {
+        console.error('Error actualizando clase virtual:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+// =============================================
+// ELIMINAR CLASE VIRTUAL (SOLO ADMIN/INSTRUCTOR)
+// =============================================
+const deleteClaseVirtual = async (req, res) => {
+    try {
+        const userId = req.user?.id
+        const { claseId } = req.params
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
+
+        // Verificar que la clase existe y permisos
+        const permisoCheck = await pool.query(
+            `SELECT cv.*, u.tipo_usuario, c.instructor_id 
+             FROM clases_virtuales cv
+             JOIN cursos c ON cv.curso_id = c.id
+             JOIN perfiles_usuario u ON u.id = $1
+             WHERE cv.id = $2 AND cv.activa = true`,
+            [userId, claseId]
+        )
+
+        if (permisoCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Clase virtual no encontrada'
+            })
+        }
+
+        const { tipo_usuario, instructor_id, creada_por, titulo } = permisoCheck.rows[0]
+        const puedeEliminar = tipo_usuario === 'admin' || instructor_id === userId || creada_por === userId
+
+        if (!puedeEliminar) {
+            return res.status(403).json({
+                success: false,
+                message: 'No tienes permisos para eliminar esta clase virtual'
+            })
+        }
+
+        // Soft delete - marcar como inactiva
+        await pool.query(
+            `UPDATE clases_virtuales 
+             SET activa = false, actualizada_en = NOW()
+             WHERE id = $1`,
+            [claseId]
+        )
+
+        res.json({
+            success: true,
+            message: `Clase virtual "${titulo}" eliminada exitosamente`
+        })
+
+    } catch (error) {
+        console.error('Error eliminando clase virtual:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
 // =============================================
 // OBTENER CLASES VIRTUALES DEL USUARIO (todas sus clases)
 // =============================================
@@ -343,5 +475,7 @@ module.exports = {
     getClasesVirtualesByCourse,
     getMisClasesVirtuales,
     getClaseVirtualDetail,
-    createClaseVirtual
+    createClaseVirtual,
+    updateClaseVirtual,      // NUEVO
+    deleteClaseVirtual       // NUEVO
 }

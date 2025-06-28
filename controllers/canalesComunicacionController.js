@@ -278,6 +278,70 @@ const createCanal = async (req, res) => {
     }
 }
 
+const updateCanal = async (req, res) => {
+    try {
+        const userId = req.user?.id
+        const { canalId } = req.params
+        const { nombre, descripcion, tipoCanal, linkAcceso } = req.body
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
+
+        // Verificar que el canal existe y permisos (CORREGIR TABLA)
+        const permisoCheck = await pool.query(
+            `SELECT cc.*, u.tipo_usuario, c.instructor_id
+             FROM canales_curso cc
+                      JOIN cursos c ON cc.curso_id = c.id
+                      JOIN perfiles_usuario u ON u.id = $1
+             WHERE cc.id = $2 AND cc.activo = true`,
+            [userId, canalId]
+        )
+
+        if (permisoCheck.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Canal no encontrado'
+            })
+        }
+
+        const { tipo_usuario, instructor_id, creado_por } = permisoCheck.rows[0]
+        const puedeEditar = tipo_usuario === 'admin' || instructor_id === userId || creado_por === userId
+
+        if (!puedeEditar) {
+            return res.status(403).json({
+                success: false,
+                message: 'No tienes permisos para editar este canal'
+            })
+        }
+
+        // Actualizar canal (CORREGIR TABLA)
+        const result = await pool.query(
+            `UPDATE canales_curso
+             SET nombre = $1, descripcion = $2, tipo_canal = $3, link_acceso = $4
+             WHERE id = $5
+                 RETURNING *`,
+            [nombre, descripcion, tipoCanal, linkAcceso, canalId]
+        )
+
+        res.json({
+            success: true,
+            message: 'Canal actualizado exitosamente',
+            data: result.rows[0]
+        })
+
+    } catch (error) {
+        console.error('Error actualizando canal:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
 // =============================================
 // FUNCIONES DE UTILIDAD
 // =============================================
@@ -305,5 +369,6 @@ module.exports = {
     getCanalesByCourse,
     getMisCanales,
     getCanalDetail,
+    updateCanal,
     createCanal
 }

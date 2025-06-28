@@ -5,7 +5,9 @@ const {
     getClasesVirtualesByCourse,
     getMisClasesVirtuales,
     getClaseVirtualDetail,
-    createClaseVirtual
+    createClaseVirtual,
+    updateClaseVirtual,      // NUEVO
+    deleteClaseVirtual       // NUEVO
 } = require('../controllers/clasesVirtualesController')
 const { authenticateToken } = require('../middleware/auth')
 
@@ -44,6 +46,18 @@ router.get('/:claseId/detail',
 router.post('/create',
     authenticateToken,
     createClaseVirtual
+)
+
+// Actualizar clase virtual (admin/instructor) - NUEVO
+router.put('/:claseId',
+    authenticateToken,
+    updateClaseVirtual
+)
+
+// Eliminar clase virtual (admin/instructor) - NUEVO
+router.delete('/:claseId',
+    authenticateToken,
+    deleteClaseVirtual
 )
 
 // ==================== MIDDLEWARE DE MANEJO DE ERRORES ====================
