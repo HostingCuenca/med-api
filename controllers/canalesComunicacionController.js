@@ -349,8 +349,8 @@ const getTipoCanalDisplay = (tipoCanal) => {
     const tipos = {
         'whatsapp': { name: 'WhatsApp', icon: '📱', color: 'bg-green-100 text-green-800' },
         'telegram': { name: 'Telegram', icon: '✈️', color: 'bg-blue-100 text-blue-800' },
-        'discord': { name: 'Discord', icon: '🎮', color: 'bg-purple-100 text-purple-800' },
-        'slack': { name: 'Slack', icon: '💬', color: 'bg-pink-100 text-pink-800' }
+        // 'discord': { name: 'Discord', icon: '🎮', color: 'bg-purple-100 text-purple-800' },
+        // 'slack': { name: 'Slack', icon: '💬', color: 'bg-pink-100 text-pink-800' }
     }
     return tipos[tipoCanal] || { name: tipoCanal, icon: '📢', color: 'bg-gray-100 text-gray-800' }
 }

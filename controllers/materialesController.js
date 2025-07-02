@@ -300,6 +300,71 @@ const getMaterialDetail = async (req, res) => {
 // =============================================
 // MIS MATERIALES (materiales de cursos inscritos)
 // =============================================
+// const getMisMateriales1 = async (req, res) => {
+//     try {
+//         const userId = req.user?.id
+//
+//         if (!userId) {
+//             return res.status(401).json({
+//                 success: false,
+//                 message: 'Usuario no autenticado'
+//             })
+//         }
+//
+//         // SIGUIENDO LÓGICA DE SIMULACROS: JOIN con inscripciones
+//         const result = await pool.query(
+//             `SELECT m.*, c.titulo as curso_titulo,
+//                 'admin' as autor,
+//                 -- Verificar acceso igual que simulacros
+//                 CASE
+//                     WHEN c.es_gratuito = true THEN 'habilitado'
+//                     WHEN i.estado_pago IS NULL THEN 'no_inscrito'
+//                     ELSE i.estado_pago
+//                 END as estado_acceso
+//             FROM materiales m
+//             JOIN cursos c ON m.curso_id = c.id
+//             LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
+//             WHERE (m.tipo_material = 'curso' OR m.tipo_material IS NULL)
+//                 AND (c.es_gratuito = true OR i.estado_pago = 'habilitado')
+//             ORDER BY m.fecha_creacion DESC`,
+//             [userId]
+//         )
+//
+//         const materiales = result.rows.map(row => ({
+//             ...row,
+//             precio: parseFloat(row.precio) || 0,
+//             puede_acceder: row.estado_acceso === 'habilitado',
+//             tipo_display: getTipoMaterialDisplay(row.tipo_material || 'curso'),
+//             archivo_extension: getFileExtension(row.archivo_url)
+//         }))
+//
+//         res.json({
+//             success: true,
+//             data: {
+//                 materiales,
+//                 estadisticas: {
+//                     total: materiales.length,
+//                     por_curso: materiales.reduce((acc, material) => {
+//                         acc[material.curso_titulo] = (acc[material.curso_titulo] || 0) + 1
+//                         return acc
+//                     }, {}),
+//                     accesibles: materiales.filter(m => m.puede_acceder).length
+//                 }
+//             }
+//         })
+//
+//     } catch (error) {
+//         console.error('Error obteniendo mis materiales:', error)
+//         res.status(500).json({
+//             success: false,
+//             message: 'Error interno del servidor'
+//         })
+//     }
+// }
+
+// =============================================
+// MIS MATERIALES - VERSIÓN MODIFICADA (SOLO CURSOS INSCRITOS)
+// =============================================
 const getMisMateriales = async (req, res) => {
     try {
         const userId = req.user?.id
@@ -311,21 +376,30 @@ const getMisMateriales = async (req, res) => {
             })
         }
 
-        // SIGUIENDO LÓGICA DE SIMULACROS: JOIN con inscripciones
+        console.log('📚 Obteniendo MIS materiales (solo cursos inscritos):', userId)
+
+        // QUERY MODIFICADA: SOLO materiales de cursos donde REALMENTE está inscrito y habilitado
         const result = await pool.query(
-            `SELECT m.*, c.titulo as curso_titulo,
+            `SELECT m.*, c.titulo as curso_titulo, c.es_gratuito as curso_gratuito,
                 'admin' as autor,
-                -- Verificar acceso igual que simulacros
+                i.estado_pago,
+                i.fecha_inscripcion,
+                i.fecha_habilitacion,
+                -- Estado de acceso más estricto
                 CASE
-                    WHEN c.es_gratuito = true THEN 'habilitado'
-                    WHEN i.estado_pago IS NULL THEN 'no_inscrito'
-                    ELSE i.estado_pago
+                    WHEN i.estado_pago = 'habilitado' THEN 'habilitado'
+                    WHEN i.estado_pago = 'pendiente' THEN 'pendiente'
+                    WHEN i.estado_pago = 'pagado' THEN 'habilitado'
+                    ELSE 'sin_acceso'
                 END as estado_acceso
             FROM materiales m
             JOIN cursos c ON m.curso_id = c.id
-            LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
+            -- ✅ CAMBIO CLAVE: INNER JOIN en lugar de LEFT JOIN
+            -- Esto garantiza que SOLO se muestren materiales de cursos inscritos
+            INNER JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
             WHERE (m.tipo_material = 'curso' OR m.tipo_material IS NULL)
-                AND (c.es_gratuito = true OR i.estado_pago = 'habilitado')
+                -- ✅ CONDICIÓN MÁS ESTRICTA: Solo cursos con pago habilitado
+                AND i.estado_pago IN ('habilitado', 'pagado')
             ORDER BY m.fecha_creacion DESC`,
             [userId]
         )
@@ -335,21 +409,52 @@ const getMisMateriales = async (req, res) => {
             precio: parseFloat(row.precio) || 0,
             puede_acceder: row.estado_acceso === 'habilitado',
             tipo_display: getTipoMaterialDisplay(row.tipo_material || 'curso'),
-            archivo_extension: getFileExtension(row.archivo_url)
+            archivo_extension: getFileExtension(row.archivo_url),
+            // Información adicional de la inscripción
+            inscripcion: {
+                estado_pago: row.estado_pago,
+                fecha_inscripcion: row.fecha_inscripcion,
+                fecha_habilitacion: row.fecha_habilitacion,
+                curso_gratuito: row.curso_gratuito
+            }
         }))
+
+        // Obtener estadísticas de inscripciones del usuario
+        const inscripcionesStats = await pool.query(
+            `SELECT 
+                COUNT(*) as total_inscripciones,
+                COUNT(CASE WHEN estado_pago = 'habilitado' THEN 1 END) as habilitadas,
+                COUNT(CASE WHEN estado_pago = 'pendiente' THEN 1 END) as pendientes,
+                COUNT(CASE WHEN estado_pago = 'pagado' THEN 1 END) as pagadas
+            FROM inscripciones 
+            WHERE usuario_id = $1`,
+            [userId]
+        )
+
+        const stats = inscripcionesStats.rows[0]
 
         res.json({
             success: true,
             data: {
                 materiales,
                 estadisticas: {
-                    total: materiales.length,
+                    total_materiales: materiales.length,
                     por_curso: materiales.reduce((acc, material) => {
                         acc[material.curso_titulo] = (acc[material.curso_titulo] || 0) + 1
                         return acc
                     }, {}),
-                    accesibles: materiales.filter(m => m.puede_acceder).length
-                }
+                    accesibles: materiales.filter(m => m.puede_acceder).length,
+                    // ✅ NUEVA: Estadísticas de inscripciones
+                    inscripciones: {
+                        total: parseInt(stats.total_inscripciones) || 0,
+                        habilitadas: parseInt(stats.habilitadas) || 0,
+                        pendientes: parseInt(stats.pendientes) || 0,
+                        pagadas: parseInt(stats.pagadas) || 0
+                    }
+                },
+                mensaje: materiales.length === 0 ?
+                    'No tienes materiales disponibles. Inscríbete en cursos para acceder a contenido.' :
+                    `Tienes acceso a ${materiales.length} materiales de tus cursos inscritos.`
             }
         })
 
@@ -361,6 +466,100 @@ const getMisMateriales = async (req, res) => {
         })
     }
 }
+
+// =============================================
+// MÉTODO ALTERNATIVO: MIS MATERIALES + LIBRES
+// =============================================
+const getMisMaterialesCompleto = async (req, res) => {
+    try {
+        const userId = req.user?.id
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: 'Usuario no autenticado'
+            })
+        }
+
+        console.log('📚 Obteniendo TODOS mis materiales (cursos + libres):', userId)
+
+        // Query combinada: materiales de cursos inscritos + materiales libres
+        const result = await pool.query(
+            `-- Materiales de cursos inscritos
+            SELECT m.*, c.titulo as curso_titulo, c.es_gratuito as curso_gratuito,
+                'admin' as autor,
+                i.estado_pago,
+                'curso_inscrito' as fuente_acceso,
+                CASE
+                    WHEN i.estado_pago IN ('habilitado', 'pagado') THEN 'habilitado'
+                    ELSE 'sin_acceso'
+                END as estado_acceso
+            FROM materiales m
+            JOIN cursos c ON m.curso_id = c.id
+            INNER JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
+            WHERE (m.tipo_material = 'curso' OR m.tipo_material IS NULL)
+                AND i.estado_pago IN ('habilitado', 'pagado')
+
+            UNION ALL
+
+            -- Materiales libres (disponibles para todos)
+            SELECT m.*, 
+                COALESCE(c.titulo, 'Material Independiente') as curso_titulo,
+                COALESCE(c.es_gratuito, true) as curso_gratuito,
+                'admin' as autor,
+                NULL as estado_pago,
+                'material_libre' as fuente_acceso,
+                'habilitado' as estado_acceso
+            FROM materiales m
+            LEFT JOIN cursos c ON m.curso_id = c.id
+            WHERE m.tipo_material = 'libre' 
+                AND m.visible_publico = true
+
+            ORDER BY fecha_creacion DESC`,
+            [userId]
+        )
+
+        const materiales = result.rows.map(row => ({
+            ...row,
+            precio: parseFloat(row.precio) || 0,
+            puede_acceder: row.estado_acceso === 'habilitado',
+            tipo_display: getTipoMaterialDisplay(row.tipo_material || 'curso'),
+            archivo_extension: getFileExtension(row.archivo_url)
+        }))
+
+        // Separar por tipo de acceso
+        const materialesCursos = materiales.filter(m => m.fuente_acceso === 'curso_inscrito')
+        const materialesLibres = materiales.filter(m => m.fuente_acceso === 'material_libre')
+
+        res.json({
+            success: true,
+            data: {
+                materiales: {
+                    todos: materiales,
+                    de_cursos_inscritos: materialesCursos,
+                    libres: materialesLibres
+                },
+                estadisticas: {
+                    total_materiales: materiales.length,
+                    de_cursos: materialesCursos.length,
+                    libres: materialesLibres.length,
+                    por_curso: materialesCursos.reduce((acc, material) => {
+                        acc[material.curso_titulo] = (acc[material.curso_titulo] || 0) + 1
+                        return acc
+                    }, {})
+                }
+            }
+        })
+
+    } catch (error) {
+        console.error('Error obteniendo materiales completos:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
 
 // =============================================
 // CREAR MATERIAL (ADMIN/INSTRUCTOR)
