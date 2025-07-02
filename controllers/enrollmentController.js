@@ -366,10 +366,57 @@ const getAllEnrollments = async (req, res) => {
 // =============================================
 // VERIFICAR ACCESO A CURSO
 // =============================================
+// const checkCourseAccess = async (req, res) => {
+//     try {
+//         const { cursoId } = req.params
+//         const userId = req.user.id
+//
+//         const result = await pool.query(
+//             `SELECT c.es_gratuito, i.estado_pago, i.fecha_habilitacion
+//              FROM cursos c
+//                       LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
+//              WHERE c.id = $2 AND c.activo = true`,
+//             [userId, cursoId]
+//         )
+//
+//         if (result.rows.length === 0) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: 'Curso no encontrado'
+//             })
+//         }
+//
+//         const curso = result.rows[0]
+//         const tieneAcceso = curso.es_gratuito || curso.estado_pago === 'habilitado'
+//
+//         res.json({
+//             success: true,
+//             data: {
+//                 tieneAcceso,
+//                 esGratuito: curso.es_gratuito,
+//                 estadoPago: curso.estado_pago || 'no_inscrito',
+//                 fechaHabilitacion: curso.fecha_habilitacion
+//             }
+//         })
+//
+//     } catch (error) {
+//         console.error('Error verificando acceso:', error)
+//         res.status(500).json({
+//             success: false,
+//             message: 'Error interno del servidor'
+//         })
+//     }
+// }
+
+// =============================================
+// VERIFICAR ACCESO A CURSO - CORREGIDO
+// =============================================
 const checkCourseAccess = async (req, res) => {
     try {
         const { cursoId } = req.params
         const userId = req.user.id
+
+        console.log('🔍 Verificando acceso para:', { userId, cursoId })
 
         const result = await pool.query(
             `SELECT c.es_gratuito, i.estado_pago, i.fecha_habilitacion
@@ -387,26 +434,72 @@ const checkCourseAccess = async (req, res) => {
         }
 
         const curso = result.rows[0]
-        const tieneAcceso = curso.es_gratuito || curso.estado_pago === 'habilitado'
 
-        res.json({
+        console.log('📚 Datos del curso:', {
+            es_gratuito: curso.es_gratuito,
+            estado_pago: curso.estado_pago,
+            fecha_habilitacion: curso.fecha_habilitacion
+        })
+
+        // ✅ CORREGIDO: Validar tanto 'habilitado' como 'pagado' para compatibilidad
+        const tieneAcceso = curso.es_gratuito ||
+            curso.estado_pago === 'habilitado' ||
+            curso.estado_pago === 'pagado'
+
+        // Determinar si está inscrito (tiene cualquier estado de pago)
+        const estaInscrito = curso.estado_pago !== null && curso.estado_pago !== undefined
+
+        // Determinar el estado para el frontend
+        let estadoParaFrontend = 'no_inscrito'
+        if (curso.estado_pago) {
+            // Normalizar estados para el frontend
+            switch (curso.estado_pago) {
+                case 'habilitado':
+                case 'pagado':
+                    estadoParaFrontend = 'habilitado'
+                    break
+                case 'pendiente':
+                    estadoParaFrontend = 'pendiente'
+                    break
+                case 'cancelado':
+                case 'expirado':
+                    estadoParaFrontend = 'cancelado'
+                    break
+                default:
+                    estadoParaFrontend = curso.estado_pago
+            }
+        }
+
+        const response = {
             success: true,
             data: {
                 tieneAcceso,
                 esGratuito: curso.es_gratuito,
-                estadoPago: curso.estado_pago || 'no_inscrito',
-                fechaHabilitacion: curso.fecha_habilitacion
+                estadoPago: estadoParaFrontend,
+                estado_pago: estadoParaFrontend,  // ✅ Compatibilidad adicional
+                fechaHabilitacion: curso.fecha_habilitacion,
+                inscrito: estaInscrito  // ✅ Basado en si tiene inscripción
             }
-        })
+        }
+
+        console.log('🎯 Respuesta final:', response.data)
+
+        res.json(response)
 
     } catch (error) {
         console.error('Error verificando acceso:', error)
         res.status(500).json({
             success: false,
-            message: 'Error interno del servidor'
+            message: 'Error interno del servidor',
+            debug: {
+                error: error.message,
+                userId,
+                cursoId
+            }
         })
     }
 }
+
 
 module.exports = {
     enrollCourse,

@@ -5,9 +5,95 @@ const bcrypt = require('bcryptjs')
 // =============================================
 // OBTENER TODOS LOS USUARIOS
 // =============================================
+// const getAllUsers = async (req, res) => {
+//     try {
+//         const { page = 1, limit = 20, tipo, search, activo } = req.query
+//
+//         let query = `
+//             SELECT id, email, nombre_completo, nombre_usuario, telefono, avatar_url,
+//                    tipo_usuario, activo, fecha_registro, ultima_conexion,
+//                    (SELECT COUNT(*) FROM inscripciones WHERE usuario_id = perfiles_usuario.id) as total_inscripciones,
+//                    (SELECT COUNT(*) FROM inscripciones WHERE usuario_id = perfiles_usuario.id AND estado_pago = 'habilitado') as inscripciones_activas
+//             FROM perfiles_usuario
+//             WHERE 1=1
+//         `
+//         const params = []
+//         let paramCount = 0
+//
+//         if (tipo) {
+//             paramCount++
+//             query += ` AND tipo_usuario = $${paramCount}`
+//             params.push(tipo)
+//         }
+//
+//         if (activo !== undefined) {
+//             paramCount++
+//             query += ` AND activo = $${paramCount}`
+//             params.push(activo === 'true')
+//         }
+//
+//         if (search) {
+//             paramCount++
+//             query += ` AND (nombre_completo ILIKE $${paramCount} OR email ILIKE $${paramCount} OR nombre_usuario ILIKE $${paramCount})`
+//             params.push(`%${search}%`)
+//         }
+//
+//         query += ` ORDER BY fecha_registro DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`
+//         params.push(limit, (page - 1) * limit)
+//
+//         const result = await pool.query(query, params)
+//
+//         // Contar total
+//         let countQuery = 'SELECT COUNT(*) as total FROM perfiles_usuario WHERE 1=1'
+//         const countParams = []
+//         let countParamCount = 0
+//
+//         if (tipo) {
+//             countParamCount++
+//             countQuery += ` AND tipo_usuario = $${countParamCount}`
+//             countParams.push(tipo)
+//         }
+//
+//         if (activo !== undefined) {
+//             countParamCount++
+//             countQuery += ` AND activo = $${countParamCount}`
+//             countParams.push(activo === 'true')
+//         }
+//
+//         if (search) {
+//             countParamCount++
+//             countQuery += ` AND (nombre_completo ILIKE $${countParamCount} OR email ILIKE $${countParamCount} OR nombre_usuario ILIKE $${countParamCount})`
+//             countParams.push(`%${search}%`)
+//         }
+//
+//         const countResult = await pool.query(countQuery, countParams)
+//
+//         res.json({
+//             success: true,
+//             data: {
+//                 usuarios: result.rows,
+//                 pagination: {
+//                     total: parseInt(countResult.rows[0].total),
+//                     page: parseInt(page),
+//                     limit: parseInt(limit),
+//                     totalPages: Math.ceil(countResult.rows[0].total / limit)
+//                 }
+//             }
+//         })
+//
+//     } catch (error) {
+//         console.error('Error obteniendo usuarios:', error)
+//         res.status(500).json({
+//             success: false,
+//             message: 'Error interno del servidor'
+//         })
+//     }
+// }
+
+// controllers/userManagementController.js - SIMPLIFICADO
 const getAllUsers = async (req, res) => {
     try {
-        const { page = 1, limit = 20, tipo, search, activo } = req.query
+        const { tipo, search, activo } = req.query
 
         let query = `
             SELECT id, email, nombre_completo, nombre_usuario, telefono, avatar_url, 
@@ -38,46 +124,15 @@ const getAllUsers = async (req, res) => {
             params.push(`%${search}%`)
         }
 
-        query += ` ORDER BY fecha_registro DESC LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`
-        params.push(limit, (page - 1) * limit)
+        query += ` ORDER BY fecha_registro DESC`
 
         const result = await pool.query(query, params)
-
-        // Contar total
-        let countQuery = 'SELECT COUNT(*) as total FROM perfiles_usuario WHERE 1=1'
-        const countParams = []
-        let countParamCount = 0
-
-        if (tipo) {
-            countParamCount++
-            countQuery += ` AND tipo_usuario = $${countParamCount}`
-            countParams.push(tipo)
-        }
-
-        if (activo !== undefined) {
-            countParamCount++
-            countQuery += ` AND activo = $${countParamCount}`
-            countParams.push(activo === 'true')
-        }
-
-        if (search) {
-            countParamCount++
-            countQuery += ` AND (nombre_completo ILIKE $${countParamCount} OR email ILIKE $${countParamCount} OR nombre_usuario ILIKE $${countParamCount})`
-            countParams.push(`%${search}%`)
-        }
-
-        const countResult = await pool.query(countQuery, countParams)
 
         res.json({
             success: true,
             data: {
                 usuarios: result.rows,
-                pagination: {
-                    total: parseInt(countResult.rows[0].total),
-                    page: parseInt(page),
-                    limit: parseInt(limit),
-                    totalPages: Math.ceil(countResult.rows[0].total / limit)
-                }
+                total: result.rows.length
             }
         })
 
@@ -89,6 +144,7 @@ const getAllUsers = async (req, res) => {
         })
     }
 }
+
 
 // =============================================
 // OBTENER USUARIO POR ID - NUEVO
