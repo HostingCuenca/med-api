@@ -1193,15 +1193,168 @@ const createSimulacro = async (req, res) => {
     }
 }
 
+// const updateSimulacro = async (req, res) => {
+//     try {
+//         const { id } = req.params
+//         const {
+//             titulo, descripcion,
+//             modoEvaluacion,
+//             modoEstudio,           // NUEVO
+//             tipoTiempo,           // NUEVO
+//             tipoNavegacion,       // NUEVO
+//             tiempoLimiteMinutos,
+//             tiempoPorPreguntaSegundos,
+//             numeroPreguntas,
+//             intentosPermitidos,
+//             randomizarPreguntas,
+//             randomizarOpciones,
+//             mostrarRespuestasDespues,
+//             configuracionAvanzada  // NUEVO
+//         } = req.body
+//
+//         console.log('✏️ Actualizando simulacro:', id, { modoEstudio, tipoTiempo, tipoNavegacion })
+//
+//         // Verificar permisos
+//         const simulacroCheck = await pool.query(
+//             `SELECT curso_id, configuracion_avanzada FROM simulacros WHERE id = $1`,
+//             [id]
+//         )
+//
+//         if (simulacroCheck.rows.length === 0) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: 'Simulacro no encontrado'
+//             })
+//         }
+//
+//         const cursoId = simulacroCheck.rows[0].curso_id
+//         const configActual = simulacroCheck.rows[0].configuracion_avanzada || {}
+//
+//         const hasPermission = await checkCoursePermission(req.user.id, req.user.tipo_usuario, cursoId)
+//         if (!hasPermission) {
+//             return res.status(403).json({
+//                 success: false,
+//                 message: 'No tienes permisos para modificar este simulacro'
+//             })
+//         }
+//
+//         // Preparar datos para validación (solo campos que se van a actualizar)
+//         const updateData = {}
+//         if (modoEstudio !== undefined) updateData.modoEstudio = modoEstudio
+//         if (tipoTiempo !== undefined) updateData.tipoTiempo = tipoTiempo
+//         if (tipoNavegacion !== undefined) updateData.tipoNavegacion = tipoNavegacion
+//         if (tiempoLimiteMinutos !== undefined) updateData.tiempoLimiteMinutos = tiempoLimiteMinutos
+//         if (tiempoPorPreguntaSegundos !== undefined) updateData.tiempoPorPreguntaSegundos = tiempoPorPreguntaSegundos
+//         if (numeroPreguntas !== undefined) updateData.numeroPreguntas = numeroPreguntas
+//         if (intentosPermitidos !== undefined) updateData.intentosPermitidos = intentosPermitidos
+//
+//         // Validar si hay cambios de configuración críticos
+//         if (Object.keys(updateData).length > 0) {
+//             const validation = validateSimulacroConfig(updateData)
+//             if (!validation.isValid) {
+//                 return res.status(400).json({
+//                     success: false,
+//                     message: 'Configuración de simulacro inválida',
+//                     errors: validation.errors
+//                 })
+//             }
+//         }
+//
+//         // Calcular tiempos automáticamente si es necesario
+//         let tiempoLimiteFinal = tiempoLimiteMinutos
+//         let tiempoPorPreguntaFinal = tiempoPorPreguntaSegundos
+//
+//         if (tipoTiempo === 'por_pregunta' && tiempoPorPreguntaFinal && numeroPreguntas && !tiempoLimiteFinal) {
+//             tiempoLimiteFinal = Math.ceil((tiempoPorPreguntaFinal * numeroPreguntas) / 60)
+//         } else if (tipoTiempo === 'global' && tiempoLimiteFinal && numeroPreguntas && !tiempoPorPreguntaFinal) {
+//             tiempoPorPreguntaFinal = Math.floor((tiempoLimiteFinal * 60) / numeroPreguntas)
+//         }
+//
+//         // Actualizar configuración avanzada
+//         const configActualizada = {
+//             ...configActual,
+//             ...configuracionAvanzada,
+//             ultima_modificacion: new Date().toISOString(),
+//             modificado_por: req.user.id
+//         }
+//
+//         // Construir query de actualización dinámicamente
+//         const updateFields = []
+//         const updateValues = []
+//         let paramCount = 0
+//
+//         const addField = (field, value) => {
+//             if (value !== undefined) {
+//                 paramCount++
+//                 updateFields.push(`${field} = $${paramCount}`)
+//                 updateValues.push(value)
+//             }
+//         }
+//
+//         addField('titulo', titulo)
+//         addField('descripcion', descripcion)
+//         addField('modo_evaluacion', modoEvaluacion)
+//         addField('modo_estudio', modoEstudio)
+//         addField('tipo_tiempo', tipoTiempo)
+//         addField('tipo_navegacion', tipoNavegacion)
+//         addField('tiempo_limite_minutos', tiempoLimiteFinal)
+//         addField('tiempo_por_pregunta_segundos', tiempoPorPreguntaFinal)
+//         addField('numero_preguntas', numeroPreguntas)
+//         addField('intentos_permitidos', intentosPermitidos)
+//         addField('randomizar_preguntas', randomizarPreguntas)
+//         addField('randomizar_opciones', randomizarOpciones)
+//         addField('mostrar_respuestas_despues', mostrarRespuestasDespues)
+//         addField('configuracion_avanzada', JSON.stringify(configActualizada))
+//
+//         if (updateFields.length === 0) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: 'No hay campos para actualizar'
+//             })
+//         }
+//
+//         // Ejecutar actualización
+//         const result = await pool.query(
+//             `UPDATE simulacros SET ${updateFields.join(', ')} WHERE id = $${paramCount + 1} RETURNING *`,
+//             [...updateValues, id]
+//         )
+//
+//         const simulacroActualizado = result.rows[0]
+//
+//         console.log('✅ Simulacro actualizado exitosamente')
+//
+//         res.json({
+//             success: true,
+//             message: 'Simulacro actualizado exitosamente',
+//             data: {
+//                 simulacro: simulacroActualizado,
+//                 cambios_aplicados: updateFields.map(field => field.split(' = ')[0]),
+//                 configuracion: {
+//                     modo: modoEstudio ? SIMULACRO_MODES[modoEstudio] : undefined,
+//                     tiempo_tipo: tipoTiempo ? TIEMPO_TYPES[tipoTiempo] : undefined,
+//                     navegacion_tipo: tipoNavegacion ? NAVEGACION_TYPES[tipoNavegacion] : undefined
+//                 }
+//             }
+//         })
+//
+//     } catch (error) {
+//         console.error('❌ Error actualizando simulacro:', error)
+//         res.status(500).json({
+//             success: false,
+//             message: 'Error interno del servidor',
+//             debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+//         })
+//     }
+// }
 const updateSimulacro = async (req, res) => {
     try {
         const { id } = req.params
         const {
             titulo, descripcion,
             modoEvaluacion,
-            modoEstudio,           // NUEVO
-            tipoTiempo,           // NUEVO
-            tipoNavegacion,       // NUEVO
+            modoEstudio,
+            tipoTiempo,
+            tipoNavegacion,
             tiempoLimiteMinutos,
             tiempoPorPreguntaSegundos,
             numeroPreguntas,
@@ -1209,10 +1362,10 @@ const updateSimulacro = async (req, res) => {
             randomizarPreguntas,
             randomizarOpciones,
             mostrarRespuestasDespues,
-            configuracionAvanzada  // NUEVO
+            configuracionAvanzada
         } = req.body
 
-        console.log('✏️ Actualizando simulacro:', id, { modoEstudio, tipoTiempo, tipoNavegacion })
+        console.log('✏️ Actualizando simulacro:', id)
 
         // Verificar permisos
         const simulacroCheck = await pool.query(
@@ -1238,86 +1391,118 @@ const updateSimulacro = async (req, res) => {
             })
         }
 
-        // Preparar datos para validación (solo campos que se van a actualizar)
-        const updateData = {}
-        if (modoEstudio !== undefined) updateData.modoEstudio = modoEstudio
-        if (tipoTiempo !== undefined) updateData.tipoTiempo = tipoTiempo
-        if (tipoNavegacion !== undefined) updateData.tipoNavegacion = tipoNavegacion
-        if (tiempoLimiteMinutos !== undefined) updateData.tiempoLimiteMinutos = tiempoLimiteMinutos
-        if (tiempoPorPreguntaSegundos !== undefined) updateData.tiempoPorPreguntaSegundos = tiempoPorPreguntaSegundos
-        if (numeroPreguntas !== undefined) updateData.numeroPreguntas = numeroPreguntas
-        if (intentosPermitidos !== undefined) updateData.intentosPermitidos = intentosPermitidos
-
-        // Validar si hay cambios de configuración críticos
-        if (Object.keys(updateData).length > 0) {
-            const validation = validateSimulacroConfig(updateData)
-            if (!validation.isValid) {
-                return res.status(400).json({
-                    success: false,
-                    message: 'Configuración de simulacro inválida',
-                    errors: validation.errors
-                })
-            }
-        }
-
-        // Calcular tiempos automáticamente si es necesario
-        let tiempoLimiteFinal = tiempoLimiteMinutos
-        let tiempoPorPreguntaFinal = tiempoPorPreguntaSegundos
-
-        if (tipoTiempo === 'por_pregunta' && tiempoPorPreguntaFinal && numeroPreguntas && !tiempoLimiteFinal) {
-            tiempoLimiteFinal = Math.ceil((tiempoPorPreguntaFinal * numeroPreguntas) / 60)
-        } else if (tipoTiempo === 'global' && tiempoLimiteFinal && numeroPreguntas && !tiempoPorPreguntaFinal) {
-            tiempoPorPreguntaFinal = Math.floor((tiempoLimiteFinal * 60) / numeroPreguntas)
-        }
-
-        // Actualizar configuración avanzada
-        const configActualizada = {
-            ...configActual,
-            ...configuracionAvanzada,
-            ultima_modificacion: new Date().toISOString(),
-            modificado_por: req.user.id
-        }
-
-        // Construir query de actualización dinámicamente
+        // ========================================
+        // LÓGICA INTELIGENTE: SOLO ACTUALIZAR LO QUE TIENE VALOR
+        // ========================================
         const updateFields = []
         const updateValues = []
         let paramCount = 0
 
-        const addField = (field, value) => {
-            if (value !== undefined) {
+        const addFieldIfValid = (fieldName, value) => {
+            // Solo agregar si el valor es válido (no vacío, no undefined, no null)
+            if (value !== undefined && value !== null && value !== '') {
+                // Para strings, verificar que no sea solo espacios
+                if (typeof value === 'string' && value.trim() === '') {
+                    return false
+                }
+
                 paramCount++
-                updateFields.push(`${field} = $${paramCount}`)
+                updateFields.push(`${fieldName} = $${paramCount}`)
                 updateValues.push(value)
+                console.log(`✅ Actualizando ${fieldName}: ${value}`)
+                return true
+            } else {
+                console.log(`⏭️ Saltando ${fieldName}: valor vacío/inválido (${value})`)
+                return false
             }
         }
 
-        addField('titulo', titulo)
-        addField('descripcion', descripcion)
-        addField('modo_evaluacion', modoEvaluacion)
-        addField('modo_estudio', modoEstudio)
-        addField('tipo_tiempo', tipoTiempo)
-        addField('tipo_navegacion', tipoNavegacion)
-        addField('tiempo_limite_minutos', tiempoLimiteFinal)
-        addField('tiempo_por_pregunta_segundos', tiempoPorPreguntaFinal)
-        addField('numero_preguntas', numeroPreguntas)
-        addField('intentos_permitidos', intentosPermitidos)
-        addField('randomizar_preguntas', randomizarPreguntas)
-        addField('randomizar_opciones', randomizarOpciones)
-        addField('mostrar_respuestas_despues', mostrarRespuestasDespues)
-        addField('configuracion_avanzada', JSON.stringify(configActualizada))
+        // Campos de texto (siempre actualizar si vienen)
+        addFieldIfValid('titulo', titulo)
+        addFieldIfValid('descripcion', descripcion)
+        addFieldIfValid('modo_evaluacion', modoEvaluacion)
+        addFieldIfValid('modo_estudio', modoEstudio)
+        addFieldIfValid('tipo_tiempo', tipoTiempo)
+        addFieldIfValid('tipo_navegacion', tipoNavegacion)
 
+        // Campos numéricos (solo si tienen valor válido)
+        if (tiempoLimiteMinutos !== undefined && tiempoLimiteMinutos !== null && tiempoLimiteMinutos !== '') {
+            const timeLimit = parseInt(tiempoLimiteMinutos, 10)
+            if (!isNaN(timeLimit) && timeLimit > 0) {
+                addFieldIfValid('tiempo_limite_minutos', timeLimit)
+            }
+        }
+
+        if (tiempoPorPreguntaSegundos !== undefined && tiempoPorPreguntaSegundos !== null && tiempoPorPreguntaSegundos !== '') {
+            const timePerQuestion = parseInt(tiempoPorPreguntaSegundos, 10)
+            if (!isNaN(timePerQuestion) && timePerQuestion > 0) {
+                addFieldIfValid('tiempo_por_pregunta_segundos', timePerQuestion)
+            }
+        }
+
+        if (numeroPreguntas !== undefined && numeroPreguntas !== null && numeroPreguntas !== '') {
+            const numQuestions = parseInt(numeroPreguntas, 10)
+            if (!isNaN(numQuestions) && numQuestions > 0) {
+                addFieldIfValid('numero_preguntas', numQuestions)
+            }
+        }
+
+        if (intentosPermitidos !== undefined && intentosPermitidos !== null && intentosPermitidos !== '') {
+            const attempts = parseInt(intentosPermitidos, 10)
+            if (!isNaN(attempts) && attempts >= -1) {
+                addFieldIfValid('intentos_permitidos', attempts)
+            }
+        }
+
+        if (mostrarRespuestasDespues !== undefined && mostrarRespuestasDespues !== null && mostrarRespuestasDespues !== '') {
+            const showAnswers = parseInt(mostrarRespuestasDespues, 10)
+            if (!isNaN(showAnswers) && showAnswers >= 0) {
+                addFieldIfValid('mostrar_respuestas_despues', showAnswers)
+            }
+        }
+
+        // Campos booleanos (actualizar solo si vienen definidos)
+        if (randomizarPreguntas !== undefined && randomizarPreguntas !== null) {
+            addFieldIfValid('randomizar_preguntas', Boolean(randomizarPreguntas))
+        }
+
+        if (randomizarOpciones !== undefined && randomizarOpciones !== null) {
+            addFieldIfValid('randomizar_opciones', Boolean(randomizarOpciones))
+        }
+
+        // Configuración avanzada (siempre actualizar si viene)
+        if (configuracionAvanzada && typeof configuracionAvanzada === 'object') {
+            const configActualizada = {
+                ...configActual,
+                ...configuracionAvanzada,
+                ultima_modificacion: new Date().toISOString(),
+                modificado_por: req.user.id
+            }
+            addFieldIfValid('configuracion_avanzada', JSON.stringify(configActualizada))
+        }
+
+        // ========================================
+        // VERIFICAR QUE HAY ALGO QUE ACTUALIZAR
+        // ========================================
         if (updateFields.length === 0) {
             return res.status(400).json({
                 success: false,
-                message: 'No hay campos para actualizar'
+                message: 'No hay campos válidos para actualizar. Todos los valores están vacíos o son inválidos.',
+                debug: {
+                    received: req.body,
+                    reason: 'Todos los campos están vacíos, undefined, null o son inválidos'
+                }
             })
         }
 
-        // Ejecutar actualización
-        const result = await pool.query(
-            `UPDATE simulacros SET ${updateFields.join(', ')} WHERE id = $${paramCount + 1} RETURNING *`,
-            [...updateValues, id]
-        )
+        // ========================================
+        // EJECUTAR UPDATE SOLO CON CAMPOS VÁLIDOS
+        // ========================================
+        console.log(`🚀 Ejecutando UPDATE con ${updateFields.length} campos válidos`)
+        console.log('📋 Campos a actualizar:', updateFields)
+
+        const query = `UPDATE simulacros SET ${updateFields.join(', ')} WHERE id = $${paramCount + 1} RETURNING *`
+        const result = await pool.query(query, [...updateValues, id])
 
         const simulacroActualizado = result.rows[0]
 
@@ -1328,87 +1513,24 @@ const updateSimulacro = async (req, res) => {
             message: 'Simulacro actualizado exitosamente',
             data: {
                 simulacro: simulacroActualizado,
-                cambios_aplicados: updateFields.map(field => field.split(' = ')[0]),
-                configuracion: {
-                    modo: modoEstudio ? SIMULACRO_MODES[modoEstudio] : undefined,
-                    tiempo_tipo: tipoTiempo ? TIEMPO_TYPES[tipoTiempo] : undefined,
-                    navegacion_tipo: tipoNavegacion ? NAVEGACION_TYPES[tipoNavegacion] : undefined
-                }
+                campos_actualizados: updateFields.map(field => field.split(' = ')[0]),
+                total_campos_procesados: updateFields.length
             }
         })
 
     } catch (error) {
         console.error('❌ Error actualizando simulacro:', error)
+
         res.status(500).json({
             success: false,
             message: 'Error interno del servidor',
-            debug: process.env.NODE_ENV === 'development' ? error.message : undefined
+            debug: process.env.NODE_ENV === 'development' ? {
+                error: error.message,
+                stack: error.stack
+            } : undefined
         })
     }
 }
-// const updateSimulacro = async (req, res) => {
-//     try {
-//         const { id } = req.params
-//         const {
-//             titulo, descripcion, modoEvaluacion, tiempoLimiteMinutos,
-//             tiempoPorPreguntaSegundos, numeroPreguntas, intentosPermitidos,
-//             randomizarPreguntas, randomizarOpciones, mostrarRespuestasDespues
-//         } = req.body
-//
-//         console.log('✏️ Actualizando simulacro:', id)
-//
-//         // Verificar permisos
-//         const simulacroCheck = await pool.query(
-//             `SELECT curso_id FROM simulacros WHERE id = $1`,
-//             [id]
-//         )
-//
-//         if (simulacroCheck.rows.length === 0) {
-//             return res.status(404).json({
-//                 success: false,
-//                 message: 'Simulacro no encontrado'
-//             })
-//         }
-//
-//         const cursoId = simulacroCheck.rows[0].curso_id
-//         const hasPermission = await checkCoursePermission(req.user.id, req.user.tipo_usuario, cursoId)
-//
-//         if (!hasPermission) {
-//             return res.status(403).json({
-//                 success: false,
-//                 message: 'No tienes permisos para modificar este simulacro'
-//             })
-//         }
-//
-//         const result = await pool.query(
-//             `UPDATE simulacros
-//              SET titulo = $1, descripcion = $2, modo_evaluacion = $3,
-//                  tiempo_limite_minutos = $4, tiempo_por_pregunta_segundos = $5,
-//                  numero_preguntas = $6, intentos_permitidos = $7,
-//                  randomizar_preguntas = $8, randomizar_opciones = $9,
-//                  mostrar_respuestas_despues = $10
-//              WHERE id = $11 RETURNING *`,
-//             [titulo, descripcion, modoEvaluacion, tiempoLimiteMinutos,
-//                 tiempoPorPreguntaSegundos, numeroPreguntas, intentosPermitidos,
-//                 randomizarPreguntas, randomizarOpciones, mostrarRespuestasDespues, id]
-//         )
-//
-//         console.log('✅ Simulacro actualizado exitosamente')
-//
-//         res.json({
-//             success: true,
-//             message: 'Simulacro actualizado exitosamente',
-//             data: { simulacro: result.rows[0] }
-//         })
-//
-//     } catch (error) {
-//         console.error('❌ Error actualizando simulacro:', error)
-//         res.status(500).json({
-//             success: false,
-//             message: 'Error interno del servidor'
-//         })
-//     }
-// }
 
 // =============================================
 // ELIMINAR SIMULACRO
