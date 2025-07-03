@@ -209,17 +209,249 @@ const getPendingPayments = async (req, res) => {
     }
 }
 
-// controllers/enrollmentController.js - AGREGAR ESTE NUEVO MÉTODO
 
-// =============================================
-// OBTENER TODAS LAS INSCRIPCIONES (ADMIN) - NUEVO
-// =============================================
+// const getAllEnrollments = async (req, res) => {
+//     try {
+//         const {
+//             priority = 'pending', // 'pending', 'all', 'recent'
+//             limit = 100,
+//             offset = 0,
+//             search = '',
+//             curso = '',
+//             estado = '',
+//             fechaDesde = '',
+//             fechaHasta = ''
+//         } = req.query
+//
+//         console.log('📚 Obteniendo inscripciones:', { priority, limit, offset, search })
+//
+//         // ========== QUERY BASE ==========
+//         let baseQuery = `
+//             SELECT i.*,
+//                    u.nombre_completo, u.email, u.nombre_usuario, u.telefono,
+//                    c.titulo as curso_titulo, c.precio, c.es_gratuito, c.slug,
+//                    admin.nombre_completo as aprobado_por_nombre
+//             FROM inscripciones i
+//             JOIN perfiles_usuario u ON i.usuario_id = u.id
+//             JOIN cursos c ON i.curso_id = c.id
+//             LEFT JOIN perfiles_usuario admin ON i.habilitado_por = admin.id
+//             WHERE 1=1
+//         `
+//
+//         let countQuery = `
+//             SELECT COUNT(*) as total,
+//                    COUNT(CASE WHEN i.estado_pago = 'pendiente' THEN 1 END) as pendientes,
+//                    COUNT(CASE WHEN i.estado_pago = 'habilitado' THEN 1 END) as habilitadas,
+//                    SUM(CASE WHEN i.estado_pago = 'habilitado' AND NOT c.es_gratuito THEN c.precio ELSE 0 END) as ingresos_totales,
+//                    SUM(CASE WHEN i.estado_pago = 'pendiente' AND NOT c.es_gratuito THEN c.precio ELSE 0 END) as ingresos_pendientes
+//             FROM inscripciones i
+//             JOIN perfiles_usuario u ON i.usuario_id = u.id
+//             JOIN cursos c ON i.curso_id = c.id
+//             WHERE 1=1
+//         `
+//
+//         const params = []
+//         const countParams = []
+//         let paramCount = 0
+//
+//         // ========== APLICAR FILTROS ==========
+//
+//         // Filtro por búsqueda
+//         if (search && search.trim()) {
+//             paramCount++
+//             const searchCondition = ` AND (
+//                 u.nombre_completo ILIKE $${paramCount} OR
+//                 u.email ILIKE $${paramCount} OR
+//                 u.nombre_usuario ILIKE $${paramCount} OR
+//                 c.titulo ILIKE $${paramCount}
+//             )`
+//             baseQuery += searchCondition
+//             countQuery += searchCondition
+//
+//             const searchParam = `%${search.trim()}%`
+//             params.push(searchParam)
+//             countParams.push(searchParam)
+//         }
+//
+//         // Filtro por curso
+//         if (curso && curso.trim()) {
+//             paramCount++
+//             const cursoCondition = ` AND c.titulo ILIKE $${paramCount}`
+//             baseQuery += cursoCondition
+//             countQuery += cursoCondition
+//
+//             const cursoParam = `%${curso.trim()}%`
+//             params.push(cursoParam)
+//             countParams.push(cursoParam)
+//         }
+//
+//         // Filtro por estado (solo si no es prioridad pendientes)
+//         if (estado && estado.trim() && priority !== 'pending') {
+//             paramCount++
+//             const estadoCondition = ` AND i.estado_pago = $${paramCount}`
+//             baseQuery += estadoCondition
+//             countQuery += estadoCondition
+//
+//             params.push(estado.trim())
+//             countParams.push(estado.trim())
+//         }
+//
+//         // Filtro por fechas
+//         if (fechaDesde && fechaDesde.trim()) {
+//             paramCount++
+//             const fechaDesdeCondition = ` AND i.fecha_inscripcion >= $${paramCount}`
+//             baseQuery += fechaDesdeCondition
+//             countQuery += fechaDesdeCondition
+//
+//             params.push(fechaDesde.trim())
+//             countParams.push(fechaDesde.trim())
+//         }
+//
+//         if (fechaHasta && fechaHasta.trim()) {
+//             paramCount++
+//             const fechaHastaCondition = ` AND i.fecha_inscripcion <= $${paramCount}`
+//             baseQuery += fechaHastaCondition
+//             countQuery += fechaHastaCondition
+//
+//             params.push(fechaHasta.trim())
+//             countParams.push(fechaHasta.trim())
+//         }
+//
+//         // ========== ORDENAMIENTO SEGÚN PRIORIDAD ==========
+//         let orderBy = ''
+//
+//         switch (priority) {
+//             case 'pending':
+//                 // PRIORIDAD 1: Pendientes primero, luego los más recientes
+//                 orderBy = ` ORDER BY
+//                     CASE WHEN i.estado_pago = 'pendiente' THEN 0 ELSE 1 END,
+//                     i.fecha_inscripcion DESC`
+//                 break
+//
+//             case 'recent':
+//                 // PRIORIDAD 2: Más recientes primero
+//                 orderBy = ` ORDER BY i.fecha_inscripcion DESC`
+//                 break
+//
+//             case 'all':
+//             default:
+//                 // PRIORIDAD 3: Pendientes, luego habilitados, luego por fecha
+//                 orderBy = ` ORDER BY
+//                     CASE
+//                         WHEN i.estado_pago = 'pendiente' THEN 0
+//                         WHEN i.estado_pago = 'habilitado' THEN 1
+//                         ELSE 2
+//                     END,
+//                     i.fecha_inscripcion DESC`
+//                 break
+//         }
+//
+//         baseQuery += orderBy
+//
+//         // ========== PAGINACIÓN ==========
+//         const limitNum = Math.min(500, Math.max(10, parseInt(limit) || 100))
+//         const offsetNum = Math.max(0, parseInt(offset) || 0)
+//
+//         baseQuery += ` LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`
+//         params.push(limitNum, offsetNum)
+//
+//         // ========== EJECUTAR QUERIES ==========
+//         console.log('🔍 Ejecutando query principal...')
+//         const [inscripcionesResult, statsResult] = await Promise.all([
+//             pool.query(baseQuery, params),
+//             pool.query(countQuery, countParams)
+//         ])
+//
+//         const inscripciones = inscripcionesResult.rows
+//         const stats = statsResult.rows[0]
+//
+//         // ========== CALCULAR METADATA ==========
+//         const totalRecords = parseInt(stats.total) || 0
+//         const pendientes = parseInt(stats.pendientes) || 0
+//         const habilitadas = parseInt(stats.habilitadas) || 0
+//         const ingresosTotales = parseFloat(stats.ingresos_totales) || 0
+//         const ingresosPendientes = parseFloat(stats.ingresos_pendientes) || 0
+//
+//         // ========== DETERMINAR SI HAY MÁS DATOS ==========
+//         const hasMore = (offsetNum + inscripciones.length) < totalRecords
+//         const nextOffset = hasMore ? offsetNum + limitNum : null
+//
+//         // ========== METADATA PARA LAZY LOADING ==========
+//         const loadingMetadata = {
+//             current_batch: {
+//                 offset: offsetNum,
+//                 limit: limitNum,
+//                 returned: inscripciones.length
+//             },
+//             next_batch: hasMore ? {
+//                 offset: nextOffset,
+//                 limit: limitNum,
+//                 estimated_size: Math.min(limitNum, totalRecords - nextOffset)
+//             } : null,
+//             progress: {
+//                 loaded: offsetNum + inscripciones.length,
+//                 total: totalRecords,
+//                 percentage: totalRecords > 0 ? Math.round(((offsetNum + inscripciones.length) / totalRecords) * 100) : 100
+//             },
+//             priority_info: {
+//                 current_priority: priority,
+//                 pendientes_loaded: priority === 'pending' ?
+//                     Math.min(pendientes, offsetNum + inscripciones.length) : 'unknown',
+//                 total_pendientes: pendientes
+//             }
+//         }
+//
+//         // ========== RESPUESTA OPTIMIZADA ==========
+//         const response = {
+//             success: true,
+//             data: {
+//                 inscripciones,
+//                 statistics: {
+//                     total_inscripciones: totalRecords,
+//                     pendientes,
+//                     habilitadas,
+//                     rechazadas: totalRecords - pendientes - habilitadas,
+//                     ingresos_totales: ingresosTotales,
+//                     ingresos_pendientes: ingresosPendientes
+//                 },
+//                 lazy_loading: loadingMetadata,
+//                 filters_applied: {
+//                     search: search || null,
+//                     curso: curso || null,
+//                     estado: estado || null,
+//                     fecha_desde: fechaDesde || null,
+//                     fecha_hasta: fechaHasta || null,
+//                     priority
+//                 }
+//             },
+//             message: hasMore ?
+//                 `Cargados ${inscripciones.length} registros. ${loadingMetadata.progress.loaded}/${totalRecords} total.` :
+//                 `Todos los registros cargados: ${totalRecords} total.`
+//         }
+//
+//         console.log(`✅ Respuesta enviada: ${inscripciones.length} registros, hasMore: ${hasMore}`)
+//         res.json(response)
+//
+//     } catch (error) {
+//         console.error('❌ Error obteniendo inscripciones:', error)
+//         res.status(500).json({
+//             success: false,
+//             message: 'Error interno del servidor',
+//             debug: process.env.NODE_ENV === 'development' ? {
+//                 error: error.message,
+//                 stack: error.stack
+//             } : undefined
+//         })
+//     }
+// }
+
+
 const getAllEnrollments = async (req, res) => {
     try {
         const {
-            priority = 'pending', // 'pending', 'all', 'recent'
-            limit = 100,
-            offset = 0,
+            priority = 'all', // Cambiar default a 'all' en lugar de 'pending'
+            limit = null, // null = traer todos
+            offset = null, // null = desde el inicio
             search = '',
             curso = '',
             estado = '',
@@ -246,6 +478,7 @@ const getAllEnrollments = async (req, res) => {
             SELECT COUNT(*) as total,
                    COUNT(CASE WHEN i.estado_pago = 'pendiente' THEN 1 END) as pendientes,
                    COUNT(CASE WHEN i.estado_pago = 'habilitado' THEN 1 END) as habilitadas,
+                   COUNT(CASE WHEN i.estado_pago = 'rechazado' THEN 1 END) as rechazadas,
                    SUM(CASE WHEN i.estado_pago = 'habilitado' AND NOT c.es_gratuito THEN c.precio ELSE 0 END) as ingresos_totales,
                    SUM(CASE WHEN i.estado_pago = 'pendiente' AND NOT c.es_gratuito THEN c.precio ELSE 0 END) as ingresos_pendientes
             FROM inscripciones i
@@ -289,8 +522,8 @@ const getAllEnrollments = async (req, res) => {
             countParams.push(cursoParam)
         }
 
-        // Filtro por estado (solo si no es prioridad pendientes)
-        if (estado && estado.trim() && priority !== 'pending') {
+        // Filtro por estado
+        if (estado && estado.trim()) {
             paramCount++
             const estadoCondition = ` AND i.estado_pago = $${paramCount}`
             baseQuery += estadoCondition
@@ -352,15 +585,21 @@ const getAllEnrollments = async (req, res) => {
 
         baseQuery += orderBy
 
-        // ========== PAGINACIÓN ==========
-        const limitNum = Math.min(500, Math.max(10, parseInt(limit) || 100))
-        const offsetNum = Math.max(0, parseInt(offset) || 0)
+        // ========== PAGINACIÓN CONDICIONAL ==========
+        // 🚨 CAMBIO PRINCIPAL: Solo aplicar paginación si se especifica limit y offset
+        if (limit !== null && offset !== null) {
+            const limitNum = Math.min(500, Math.max(10, parseInt(limit) || 100))
+            const offsetNum = Math.max(0, parseInt(offset) || 0)
 
-        baseQuery += ` LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`
-        params.push(limitNum, offsetNum)
+            baseQuery += ` LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`
+            params.push(limitNum, offsetNum)
+
+            console.log(`🔍 Ejecutando query con paginación: LIMIT ${limitNum} OFFSET ${offsetNum}`)
+        } else {
+            console.log('🔍 Ejecutando query SIN paginación (todos los registros)')
+        }
 
         // ========== EJECUTAR QUERIES ==========
-        console.log('🔍 Ejecutando query principal...')
         const [inscripcionesResult, statsResult] = await Promise.all([
             pool.query(baseQuery, params),
             pool.query(countQuery, countParams)
@@ -373,14 +612,41 @@ const getAllEnrollments = async (req, res) => {
         const totalRecords = parseInt(stats.total) || 0
         const pendientes = parseInt(stats.pendientes) || 0
         const habilitadas = parseInt(stats.habilitadas) || 0
+        const rechazadas = parseInt(stats.rechazadas) || 0
         const ingresosTotales = parseFloat(stats.ingresos_totales) || 0
         const ingresosPendientes = parseFloat(stats.ingresos_pendientes) || 0
 
-        // ========== DETERMINAR SI HAY MÁS DATOS ==========
+        // ========== RESPUESTA SIMPLIFICADA PARA TODOS LOS DATOS ==========
+        if (limit === null && offset === null) {
+            // Modo: TODOS LOS DATOS (para el frontend)
+            console.log(`✅ Enviando TODOS los registros: ${inscripciones.length}/${totalRecords}`)
+
+            const response = {
+                success: true,
+                data: {
+                    inscripciones,
+                    statistics: {
+                        total_inscripciones: totalRecords,
+                        pendientes,
+                        habilitadas,
+                        rechazadas,
+                        ingresos_totales: ingresosTotales,
+                        ingresos_pendientes: ingresosPendientes
+                    }
+                },
+                message: `Todos los registros cargados: ${totalRecords} total.`
+            }
+
+            return res.json(response)
+        }
+
+        // ========== MODO PAGINADO (legacy) ==========
+        const limitNum = Math.min(500, Math.max(10, parseInt(limit) || 100))
+        const offsetNum = Math.max(0, parseInt(offset) || 0)
+
         const hasMore = (offsetNum + inscripciones.length) < totalRecords
         const nextOffset = hasMore ? offsetNum + limitNum : null
 
-        // ========== METADATA PARA LAZY LOADING ==========
         const loadingMetadata = {
             current_batch: {
                 offset: offsetNum,
@@ -405,7 +671,6 @@ const getAllEnrollments = async (req, res) => {
             }
         }
 
-        // ========== RESPUESTA OPTIMIZADA ==========
         const response = {
             success: true,
             data: {
@@ -414,7 +679,7 @@ const getAllEnrollments = async (req, res) => {
                     total_inscripciones: totalRecords,
                     pendientes,
                     habilitadas,
-                    rechazadas: totalRecords - pendientes - habilitadas,
+                    rechazadas,
                     ingresos_totales: ingresosTotales,
                     ingresos_pendientes: ingresosPendientes
                 },
@@ -433,7 +698,7 @@ const getAllEnrollments = async (req, res) => {
                 `Todos los registros cargados: ${totalRecords} total.`
         }
 
-        console.log(`✅ Respuesta enviada: ${inscripciones.length} registros, hasMore: ${hasMore}`)
+        console.log(`✅ Respuesta paginada enviada: ${inscripciones.length} registros, hasMore: ${hasMore}`)
         res.json(response)
 
     } catch (error) {
@@ -448,6 +713,7 @@ const getAllEnrollments = async (req, res) => {
         })
     }
 }
+
 
 // =============================================
 // MÉTODO AUXILIAR: OBTENER SOLO ESTADÍSTICAS RÁPIDAS
