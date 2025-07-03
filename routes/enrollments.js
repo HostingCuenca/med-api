@@ -8,7 +8,9 @@ const {
     approvePayment,
     getPendingPayments,
     checkCourseAccess,
-    getAllEnrollments        // ✅ IMPORTAR NUEVO MÉTODO
+    getAllEnrollments  ,
+    getEnrollmentStats
+    // ✅ IMPORTAR NUEVO MÉTODO
 } = require('../controllers/enrollmentController')
 const { authenticateToken, requireRole } = require('../middleware/auth')
 
@@ -25,6 +27,8 @@ router.get('/check-access/:cursoId', authenticateToken, checkCourseAccess)
 // ==================== RUTAS ADMINISTRADOR ====================
 // ✅ NUEVA RUTA - Obtener TODAS las inscripciones
 router.get('/admin/all', authenticateToken, requireRole(['admin']), getAllEnrollments)
+
+router.get('/admin/stats', authenticateToken, requireRole(['admin']), getEnrollmentStats)
 
 // Obtener solo pagos pendientes (ruta existente)
 router.get('/pending', authenticateToken, requireRole(['admin']), getPendingPayments)

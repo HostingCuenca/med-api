@@ -902,13 +902,102 @@ const addToCart = async (req, res) => {
     }
 }
 
+// const deleteMaterials = async (req, res) => {
+//     try {
+//         const { materialIds } = req.body
+//         const userId = req.user?.id
+//
+//         console.log('🗑️ Eliminación masiva de materiales:', materialIds?.length)
+//
+//         if (!userId) {
+//             return res.status(401).json({
+//                 success: false,
+//                 message: 'Usuario no autenticado'
+//             })
+//         }
+//
+//         // Solo admin puede hacer eliminación masiva
+//         const userCheck = await pool.query(
+//             'SELECT tipo_usuario FROM perfiles_usuario WHERE id = $1',
+//             [userId]
+//         )
+//
+//         if (userCheck.rows[0]?.tipo_usuario !== 'admin') {
+//             return res.status(403).json({
+//                 success: false,
+//                 message: 'Solo administradores pueden realizar eliminación masiva'
+//             })
+//         }
+//
+//         if (!materialIds || !Array.isArray(materialIds) || materialIds.length === 0) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: 'Lista de IDs de materiales es requerida'
+//             })
+//         }
+//
+//         // Verificar cuáles materiales existen
+//         const materialesCheck = await pool.query(
+//             'SELECT id, titulo FROM materiales WHERE id = ANY($1)',
+//             [materialIds]
+//         )
+//
+//         const materialesExistentes = materialesCheck.rows
+//         const idsExistentes = materialesExistentes.map(m => m.id)
+//
+//         if (materialesExistentes.length === 0) {
+//             return res.status(404).json({
+//                 success: false,
+//                 message: 'No se encontraron materiales válidos para eliminar'
+//             })
+//         }
+//
+//         // Limpiar items del carrito que referencien estos materiales
+//         const carritoCleanup = await pool.query(
+//             'DELETE FROM carrito_temporal WHERE material_id = ANY($1)',
+//             [idsExistentes]
+//         )
+//
+//         // Eliminar materiales
+//         const result = await pool.query(
+//             'DELETE FROM materiales WHERE id = ANY($1) RETURNING id, titulo, tipo_material',
+//             [idsExistentes]
+//         )
+//
+//         const eliminados = result.rows.length
+//         const itemsCarritoRemovidos = carritoCleanup.rowCount || 0
+//
+//         console.log(`✅ Eliminación masiva completada: ${eliminados} materiales, ${itemsCarritoRemovidos} items de carrito`)
+//
+//         res.json({
+//             success: true,
+//             message: `${eliminados} materiales eliminados exitosamente`,
+//             data: {
+//                 materiales_eliminados: result.rows,
+//                 total_eliminados: eliminados,
+//                 total_solicitados: materialIds.length,
+//                 items_carrito_removidos: itemsCarritoRemovidos,
+//                 no_encontrados: materialIds.filter(id => !idsExistentes.includes(id))
+//             }
+//         })
+//
+//     } catch (error) {
+//         console.error('Error en eliminación masiva:', error)
+//         res.status(500).json({
+//             success: false,
+//             message: 'Error interno del servidor'
+//         })
+//     }
+// }
+
 const deleteMaterials = async (req, res) => {
     try {
         const { materialIds } = req.body
         const userId = req.user?.id
 
-        console.log('🗑️ Eliminación masiva de materiales:', materialIds?.length)
+        console.log('🗑️ Eliminación de materiales:', materialIds?.length)
 
+        // 1. VALIDACIÓN DE AUTENTICACIÓN
         if (!userId) {
             return res.status(401).json({
                 success: false,
@@ -916,7 +1005,7 @@ const deleteMaterials = async (req, res) => {
             })
         }
 
-        // Solo admin puede hacer eliminación masiva
+        // 2. VERIFICACIÓN DE PERMISOS (SOLO ADMIN)
         const userCheck = await pool.query(
             'SELECT tipo_usuario FROM perfiles_usuario WHERE id = $1',
             [userId]
@@ -925,10 +1014,11 @@ const deleteMaterials = async (req, res) => {
         if (userCheck.rows[0]?.tipo_usuario !== 'admin') {
             return res.status(403).json({
                 success: false,
-                message: 'Solo administradores pueden realizar eliminación masiva'
+                message: 'Solo administradores pueden eliminar materiales'
             })
         }
 
+        // 3. VALIDACIÓN DE DATOS DE ENTRADA
         if (!materialIds || !Array.isArray(materialIds) || materialIds.length === 0) {
             return res.status(400).json({
                 success: false,
@@ -936,9 +1026,9 @@ const deleteMaterials = async (req, res) => {
             })
         }
 
-        // Verificar cuáles materiales existen
+        // 4. VERIFICACIÓN DE EXISTENCIA DE MATERIALES
         const materialesCheck = await pool.query(
-            'SELECT id, titulo FROM materiales WHERE id = ANY($1)',
+            'SELECT id, titulo, tipo_material FROM materiales WHERE id = ANY($1)',
             [materialIds]
         )
 
@@ -952,23 +1042,17 @@ const deleteMaterials = async (req, res) => {
             })
         }
 
-        // Limpiar items del carrito que referencien estos materiales
-        const carritoCleanup = await pool.query(
-            'DELETE FROM carrito_temporal WHERE material_id = ANY($1)',
-            [idsExistentes]
-        )
-
-        // Eliminar materiales
+        // 5. ELIMINACIÓN DIRECTA
         const result = await pool.query(
             'DELETE FROM materiales WHERE id = ANY($1) RETURNING id, titulo, tipo_material',
             [idsExistentes]
         )
 
         const eliminados = result.rows.length
-        const itemsCarritoRemovidos = carritoCleanup.rowCount || 0
 
-        console.log(`✅ Eliminación masiva completada: ${eliminados} materiales, ${itemsCarritoRemovidos} items de carrito`)
+        console.log(`✅ Eliminación completada: ${eliminados} materiales`)
 
+        // 6. RESPUESTA SIMPLIFICADA
         res.json({
             success: true,
             message: `${eliminados} materiales eliminados exitosamente`,
@@ -976,19 +1060,19 @@ const deleteMaterials = async (req, res) => {
                 materiales_eliminados: result.rows,
                 total_eliminados: eliminados,
                 total_solicitados: materialIds.length,
-                items_carrito_removidos: itemsCarritoRemovidos,
                 no_encontrados: materialIds.filter(id => !idsExistentes.includes(id))
             }
         })
 
     } catch (error) {
-        console.error('Error en eliminación masiva:', error)
+        console.error('Error eliminando materiales:', error)
         res.status(500).json({
             success: false,
             message: 'Error interno del servidor'
         })
     }
 }
+
 
 // =============================================
 // OBTENER MATERIAL PARA EDICIÓN (ADMIN/INSTRUCTOR)

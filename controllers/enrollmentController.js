@@ -217,16 +217,20 @@ const getPendingPayments = async (req, res) => {
 const getAllEnrollments = async (req, res) => {
     try {
         const {
-            page = 1,
-            limit = 20,
-            estado,
-            search,
-            curso,
-            fechaDesde,
-            fechaHasta
+            priority = 'pending', // 'pending', 'all', 'recent'
+            limit = 100,
+            offset = 0,
+            search = '',
+            curso = '',
+            estado = '',
+            fechaDesde = '',
+            fechaHasta = ''
         } = req.query
 
-        let query = `
+        console.log('📚 Obteniendo inscripciones:', { priority, limit, offset, search })
+
+        // ========== QUERY BASE ==========
+        let baseQuery = `
             SELECT i.*, 
                    u.nombre_completo, u.email, u.nombre_usuario, u.telefono,
                    c.titulo as curso_titulo, c.precio, c.es_gratuito, c.slug,
@@ -237,129 +241,269 @@ const getAllEnrollments = async (req, res) => {
             LEFT JOIN perfiles_usuario admin ON i.habilitado_por = admin.id
             WHERE 1=1
         `
-        const params = []
-        let paramCount = 0
 
-        // Filtro por estado
-        if (estado && estado !== 'todos' && estado !== '') {
-            paramCount++
-            query += ` AND i.estado_pago = $${paramCount}`
-            params.push(estado)
-        }
-
-        // Filtro por búsqueda (usuario, email, curso)
-        if (search) {
-            paramCount++
-            query += ` AND (
-                u.nombre_completo ILIKE $${paramCount} OR 
-                u.email ILIKE $${paramCount} OR 
-                u.nombre_usuario ILIKE $${paramCount} OR
-                c.titulo ILIKE $${paramCount}
-            )`
-            params.push(`%${search}%`)
-        }
-
-        // Filtro por curso específico
-        if (curso) {
-            paramCount++
-            query += ` AND c.titulo ILIKE $${paramCount}`
-            params.push(`%${curso}%`)
-        }
-
-        // Filtro por fecha
-        if (fechaDesde) {
-            paramCount++
-            query += ` AND i.fecha_inscripcion >= $${paramCount}`
-            params.push(fechaDesde)
-        }
-
-        if (fechaHasta) {
-            paramCount++
-            query += ` AND i.fecha_inscripcion <= $${paramCount}`
-            params.push(fechaHasta)
-        }
-
-        // Ordenar por fecha más reciente
-        query += ` ORDER BY i.fecha_inscripcion DESC`
-
-        // Paginación
-        const offset = (page - 1) * limit
-        query += ` LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`
-        params.push(limit, offset)
-
-        const result = await pool.query(query, params)
-
-        // Contar total para paginación
         let countQuery = `
-            SELECT COUNT(*) as total
+            SELECT COUNT(*) as total,
+                   COUNT(CASE WHEN i.estado_pago = 'pendiente' THEN 1 END) as pendientes,
+                   COUNT(CASE WHEN i.estado_pago = 'habilitado' THEN 1 END) as habilitadas,
+                   SUM(CASE WHEN i.estado_pago = 'habilitado' AND NOT c.es_gratuito THEN c.precio ELSE 0 END) as ingresos_totales,
+                   SUM(CASE WHEN i.estado_pago = 'pendiente' AND NOT c.es_gratuito THEN c.precio ELSE 0 END) as ingresos_pendientes
             FROM inscripciones i
             JOIN perfiles_usuario u ON i.usuario_id = u.id
             JOIN cursos c ON i.curso_id = c.id
             WHERE 1=1
         `
+
+        const params = []
         const countParams = []
-        let countParamCount = 0
+        let paramCount = 0
 
-        // Repetir filtros para el conteo
-        if (estado && estado !== 'todos' && estado !== '') {
-            countParamCount++
-            countQuery += ` AND i.estado_pago = $${countParamCount}`
-            countParams.push(estado)
-        }
+        // ========== APLICAR FILTROS ==========
 
-        if (search) {
-            countParamCount++
-            countQuery += ` AND (
-                u.nombre_completo ILIKE $${countParamCount} OR 
-                u.email ILIKE $${countParamCount} OR 
-                u.nombre_usuario ILIKE $${countParamCount} OR
-                c.titulo ILIKE $${countParamCount}
+        // Filtro por búsqueda
+        if (search && search.trim()) {
+            paramCount++
+            const searchCondition = ` AND (
+                u.nombre_completo ILIKE $${paramCount} OR 
+                u.email ILIKE $${paramCount} OR 
+                u.nombre_usuario ILIKE $${paramCount} OR
+                c.titulo ILIKE $${paramCount}
             )`
-            countParams.push(`%${search}%`)
+            baseQuery += searchCondition
+            countQuery += searchCondition
+
+            const searchParam = `%${search.trim()}%`
+            params.push(searchParam)
+            countParams.push(searchParam)
         }
 
-        if (curso) {
-            countParamCount++
-            countQuery += ` AND c.titulo ILIKE $${countParamCount}`
-            countParams.push(`%${curso}%`)
+        // Filtro por curso
+        if (curso && curso.trim()) {
+            paramCount++
+            const cursoCondition = ` AND c.titulo ILIKE $${paramCount}`
+            baseQuery += cursoCondition
+            countQuery += cursoCondition
+
+            const cursoParam = `%${curso.trim()}%`
+            params.push(cursoParam)
+            countParams.push(cursoParam)
         }
 
-        if (fechaDesde) {
-            countParamCount++
-            countQuery += ` AND i.fecha_inscripcion >= $${countParamCount}`
-            countParams.push(fechaDesde)
+        // Filtro por estado (solo si no es prioridad pendientes)
+        if (estado && estado.trim() && priority !== 'pending') {
+            paramCount++
+            const estadoCondition = ` AND i.estado_pago = $${paramCount}`
+            baseQuery += estadoCondition
+            countQuery += estadoCondition
+
+            params.push(estado.trim())
+            countParams.push(estado.trim())
         }
 
-        if (fechaHasta) {
-            countParamCount++
-            countQuery += ` AND i.fecha_inscripcion <= $${countParamCount}`
-            countParams.push(fechaHasta)
+        // Filtro por fechas
+        if (fechaDesde && fechaDesde.trim()) {
+            paramCount++
+            const fechaDesdeCondition = ` AND i.fecha_inscripcion >= $${paramCount}`
+            baseQuery += fechaDesdeCondition
+            countQuery += fechaDesdeCondition
+
+            params.push(fechaDesde.trim())
+            countParams.push(fechaDesde.trim())
         }
 
-        const countResult = await pool.query(countQuery, countParams)
-        const total = parseInt(countResult.rows[0].total)
+        if (fechaHasta && fechaHasta.trim()) {
+            paramCount++
+            const fechaHastaCondition = ` AND i.fecha_inscripcion <= $${paramCount}`
+            baseQuery += fechaHastaCondition
+            countQuery += fechaHastaCondition
+
+            params.push(fechaHasta.trim())
+            countParams.push(fechaHasta.trim())
+        }
+
+        // ========== ORDENAMIENTO SEGÚN PRIORIDAD ==========
+        let orderBy = ''
+
+        switch (priority) {
+            case 'pending':
+                // PRIORIDAD 1: Pendientes primero, luego los más recientes
+                orderBy = ` ORDER BY 
+                    CASE WHEN i.estado_pago = 'pendiente' THEN 0 ELSE 1 END,
+                    i.fecha_inscripcion DESC`
+                break
+
+            case 'recent':
+                // PRIORIDAD 2: Más recientes primero
+                orderBy = ` ORDER BY i.fecha_inscripcion DESC`
+                break
+
+            case 'all':
+            default:
+                // PRIORIDAD 3: Pendientes, luego habilitados, luego por fecha
+                orderBy = ` ORDER BY 
+                    CASE 
+                        WHEN i.estado_pago = 'pendiente' THEN 0 
+                        WHEN i.estado_pago = 'habilitado' THEN 1 
+                        ELSE 2 
+                    END,
+                    i.fecha_inscripcion DESC`
+                break
+        }
+
+        baseQuery += orderBy
+
+        // ========== PAGINACIÓN ==========
+        const limitNum = Math.min(500, Math.max(10, parseInt(limit) || 100))
+        const offsetNum = Math.max(0, parseInt(offset) || 0)
+
+        baseQuery += ` LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`
+        params.push(limitNum, offsetNum)
+
+        // ========== EJECUTAR QUERIES ==========
+        console.log('🔍 Ejecutando query principal...')
+        const [inscripcionesResult, statsResult] = await Promise.all([
+            pool.query(baseQuery, params),
+            pool.query(countQuery, countParams)
+        ])
+
+        const inscripciones = inscripcionesResult.rows
+        const stats = statsResult.rows[0]
+
+        // ========== CALCULAR METADATA ==========
+        const totalRecords = parseInt(stats.total) || 0
+        const pendientes = parseInt(stats.pendientes) || 0
+        const habilitadas = parseInt(stats.habilitadas) || 0
+        const ingresosTotales = parseFloat(stats.ingresos_totales) || 0
+        const ingresosPendientes = parseFloat(stats.ingresos_pendientes) || 0
+
+        // ========== DETERMINAR SI HAY MÁS DATOS ==========
+        const hasMore = (offsetNum + inscripciones.length) < totalRecords
+        const nextOffset = hasMore ? offsetNum + limitNum : null
+
+        // ========== METADATA PARA LAZY LOADING ==========
+        const loadingMetadata = {
+            current_batch: {
+                offset: offsetNum,
+                limit: limitNum,
+                returned: inscripciones.length
+            },
+            next_batch: hasMore ? {
+                offset: nextOffset,
+                limit: limitNum,
+                estimated_size: Math.min(limitNum, totalRecords - nextOffset)
+            } : null,
+            progress: {
+                loaded: offsetNum + inscripciones.length,
+                total: totalRecords,
+                percentage: totalRecords > 0 ? Math.round(((offsetNum + inscripciones.length) / totalRecords) * 100) : 100
+            },
+            priority_info: {
+                current_priority: priority,
+                pendientes_loaded: priority === 'pending' ?
+                    Math.min(pendientes, offsetNum + inscripciones.length) : 'unknown',
+                total_pendientes: pendientes
+            }
+        }
+
+        // ========== RESPUESTA OPTIMIZADA ==========
+        const response = {
+            success: true,
+            data: {
+                inscripciones,
+                statistics: {
+                    total_inscripciones: totalRecords,
+                    pendientes,
+                    habilitadas,
+                    rechazadas: totalRecords - pendientes - habilitadas,
+                    ingresos_totales: ingresosTotales,
+                    ingresos_pendientes: ingresosPendientes
+                },
+                lazy_loading: loadingMetadata,
+                filters_applied: {
+                    search: search || null,
+                    curso: curso || null,
+                    estado: estado || null,
+                    fecha_desde: fechaDesde || null,
+                    fecha_hasta: fechaHasta || null,
+                    priority
+                }
+            },
+            message: hasMore ?
+                `Cargados ${inscripciones.length} registros. ${loadingMetadata.progress.loaded}/${totalRecords} total.` :
+                `Todos los registros cargados: ${totalRecords} total.`
+        }
+
+        console.log(`✅ Respuesta enviada: ${inscripciones.length} registros, hasMore: ${hasMore}`)
+        res.json(response)
+
+    } catch (error) {
+        console.error('❌ Error obteniendo inscripciones:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor',
+            debug: process.env.NODE_ENV === 'development' ? {
+                error: error.message,
+                stack: error.stack
+            } : undefined
+        })
+    }
+}
+
+// =============================================
+// MÉTODO AUXILIAR: OBTENER SOLO ESTADÍSTICAS RÁPIDAS
+// =============================================
+const getEnrollmentStats = async (req, res) => {
+    try {
+        console.log('📊 Obteniendo estadísticas rápidas...')
+
+        const statsQuery = `
+            SELECT 
+                COUNT(*) as total_inscripciones,
+                COUNT(CASE WHEN estado_pago = 'pendiente' THEN 1 END) as pendientes,
+                COUNT(CASE WHEN estado_pago = 'habilitado' THEN 1 END) as habilitadas,
+                COUNT(CASE WHEN estado_pago NOT IN ('pendiente', 'habilitado') THEN 1 END) as otras,
+                COUNT(CASE WHEN c.es_gratuito = true THEN 1 END) as gratuitas,
+                COUNT(CASE WHEN c.es_gratuito = false THEN 1 END) as pagadas,
+                SUM(CASE WHEN estado_pago = 'habilitado' AND c.es_gratuito = false THEN c.precio ELSE 0 END) as ingresos_confirmados,
+                SUM(CASE WHEN estado_pago = 'pendiente' AND c.es_gratuito = false THEN c.precio ELSE 0 END) as ingresos_pendientes,
+                MAX(fecha_inscripcion) as ultima_inscripcion
+            FROM inscripciones i
+            JOIN cursos c ON i.curso_id = c.id
+        `
+
+        const result = await pool.query(statsQuery)
+        const stats = result.rows[0]
 
         res.json({
             success: true,
             data: {
-                inscripciones: result.rows,
-                pagination: {
-                    total,
-                    page: parseInt(page),
-                    limit: parseInt(limit),
-                    totalPages: Math.ceil(total / limit)
+                total_inscripciones: parseInt(stats.total_inscripciones) || 0,
+                pendientes: parseInt(stats.pendientes) || 0,
+                habilitadas: parseInt(stats.habilitadas) || 0,
+                otras: parseInt(stats.otras) || 0,
+                gratuitas: parseInt(stats.gratuitas) || 0,
+                pagadas: parseInt(stats.pagadas) || 0,
+                ingresos_confirmados: parseFloat(stats.ingresos_confirmados) || 0,
+                ingresos_pendientes: parseFloat(stats.ingresos_pendientes) || 0,
+                ultima_inscripcion: stats.ultima_inscripcion,
+                resumen: {
+                    tasa_conversion: stats.total_inscripciones > 0 ?
+                        Math.round((parseInt(stats.habilitadas) / parseInt(stats.total_inscripciones)) * 100) : 0,
+                    inscripciones_hoy: 'Por implementar', // Agregar filtro de fecha si es necesario
+                    cursos_con_inscripciones: 'Por implementar' // Query adicional si es necesario
                 }
             }
         })
 
     } catch (error) {
-        console.error('Error obteniendo todas las inscripciones:', error)
+        console.error('❌ Error obteniendo estadísticas:', error)
         res.status(500).json({
             success: false,
-            message: 'Error interno del servidor'
+            message: 'Error obteniendo estadísticas'
         })
     }
 }
+
 
 
 
@@ -507,5 +651,6 @@ module.exports = {
     approvePayment,
     getPendingPayments,
     checkCourseAccess,
-    getAllEnrollments
+    getAllEnrollments,
+    getEnrollmentStats
 }

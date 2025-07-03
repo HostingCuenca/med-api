@@ -66,7 +66,12 @@ router.put('/:materialId',
 // )
 
 // Eliminación masiva de materiales (solo admin)
-router.delete('/bulk/delete',
+// router.delete('/bulk/delete',
+//     authenticateToken,
+//     deleteMaterials
+// )
+
+router.post('/bulk/delete',
     authenticateToken,
     deleteMaterials
 )
