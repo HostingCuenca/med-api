@@ -1355,10 +1355,611 @@ const getCalificacionLabel = (puntaje) => {
     return 'Necesita Mejorar'
 }
 
+// =============================================
+// ADMIN: OBTENER TODOS LOS SIMULACROS
+// =============================================
+const getAllSimulacros = async (req, res) => {
+    try {
+        const { cursoId, activo, modoEstudio, page = 1, limit = 50 } = req.query
+        const offset = (parseInt(page) - 1) * parseInt(limit)
+
+        // Construir query dinámicamente
+        let whereConditions = []
+        let queryParams = []
+        let paramIndex = 1
+
+        if (cursoId) {
+            whereConditions.push(`s.curso_id = $${paramIndex}`)
+            queryParams.push(cursoId)
+            paramIndex++
+        }
+
+        if (activo !== undefined) {
+            whereConditions.push(`s.activo = $${paramIndex}`)
+            queryParams.push(activo === 'true')
+            paramIndex++
+        }
+
+        if (modoEstudio) {
+            whereConditions.push(`s.modo_estudio = $${paramIndex}`)
+            queryParams.push(modoEstudio)
+            paramIndex++
+        }
+
+        const whereClause = whereConditions.length > 0
+            ? 'WHERE ' + whereConditions.join(' AND ')
+            : ''
+
+        // Query principal
+        const result = await pool.query(
+            `SELECT
+                s.*,
+                c.titulo as curso_titulo,
+                c.slug as curso_slug,
+                c.activo as curso_activo,
+                (SELECT COUNT(*) FROM preguntas p WHERE p.simulacro_id = s.id) as total_preguntas,
+                (SELECT COUNT(*) FROM intentos_simulacro i WHERE i.simulacro_id = s.id) as total_intentos,
+                (SELECT COUNT(DISTINCT i.usuario_id) FROM intentos_simulacro i WHERE i.simulacro_id = s.id) as usuarios_unicos,
+                (SELECT COALESCE(AVG(i.puntaje), 0) FROM intentos_simulacro i WHERE i.simulacro_id = s.id) as puntaje_promedio
+             FROM simulacros s
+             JOIN cursos c ON s.curso_id = c.id
+             ${whereClause}
+             ORDER BY s.fecha_creacion DESC
+             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+            [...queryParams, parseInt(limit), offset]
+        )
+
+        // Contar total para paginación
+        const countResult = await pool.query(
+            `SELECT COUNT(*) as total
+             FROM simulacros s
+             JOIN cursos c ON s.curso_id = c.id
+             ${whereClause}`,
+            queryParams
+        )
+
+        const totalSimulacros = parseInt(countResult.rows[0].total)
+        const totalPages = Math.ceil(totalSimulacros / parseInt(limit))
+
+        // Formatear respuesta
+        const simulacros = result.rows.map(row => ({
+            id: row.id,
+            titulo: row.titulo,
+            descripcion: row.descripcion,
+            activo: row.activo,
+            curso: {
+                id: row.curso_id,
+                titulo: row.curso_titulo,
+                slug: row.curso_slug,
+                activo: row.curso_activo
+            },
+            configuracion: {
+                modo_evaluacion: row.modo_evaluacion,
+                modo_estudio: row.modo_estudio,
+                numero_preguntas: row.numero_preguntas,
+                intentos_permitidos: row.intentos_permitidos,
+                tiempo_limite_minutos: row.tiempo_limite_minutos,
+                tiempo_por_pregunta_segundos: row.tiempo_por_pregunta_segundos,
+                tipo_tiempo: row.tipo_tiempo,
+                tipo_navegacion: row.tipo_navegacion,
+                randomizar_preguntas: row.randomizar_preguntas,
+                randomizar_opciones: row.randomizar_opciones,
+                mostrar_respuestas_despues: row.mostrar_respuestas_despues,
+                configuracion_avanzada: row.configuracion_avanzada
+            },
+            estadisticas: {
+                total_preguntas: parseInt(row.total_preguntas) || 0,
+                total_intentos: parseInt(row.total_intentos) || 0,
+                usuarios_unicos: parseInt(row.usuarios_unicos) || 0,
+                puntaje_promedio: parseFloat(row.puntaje_promedio) || 0
+            },
+            fecha_creacion: row.fecha_creacion
+        }))
+
+        // Estadísticas generales
+        const statsResult = await pool.query(
+            `SELECT
+                COUNT(*) as total_simulacros,
+                COUNT(CASE WHEN s.activo = true THEN 1 END) as simulacros_activos,
+                COUNT(CASE WHEN s.activo = false THEN 1 END) as simulacros_inactivos,
+                COUNT(DISTINCT s.curso_id) as cursos_con_simulacros,
+                (SELECT COUNT(*) FROM preguntas p
+                 JOIN simulacros sim ON p.simulacro_id = sim.id
+                 ${whereClause.replace('s.', 'sim.')}) as total_preguntas_global,
+                (SELECT COUNT(*) FROM intentos_simulacro i
+                 JOIN simulacros sim ON i.simulacro_id = sim.id
+                 ${whereClause.replace('s.', 'sim.')}) as total_intentos_global
+             FROM simulacros s
+             JOIN cursos c ON s.curso_id = c.id
+             ${whereClause}`,
+            queryParams
+        )
+
+        res.json({
+            success: true,
+            data: {
+                simulacros,
+                paginacion: {
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    total: totalSimulacros,
+                    totalPages,
+                    hasNext: parseInt(page) < totalPages,
+                    hasPrev: parseInt(page) > 1
+                },
+                estadisticas: {
+                    total_simulacros: parseInt(statsResult.rows[0].total_simulacros),
+                    simulacros_activos: parseInt(statsResult.rows[0].simulacros_activos),
+                    simulacros_inactivos: parseInt(statsResult.rows[0].simulacros_inactivos),
+                    cursos_con_simulacros: parseInt(statsResult.rows[0].cursos_con_simulacros),
+                    total_preguntas_global: parseInt(statsResult.rows[0].total_preguntas_global),
+                    total_intentos_global: parseInt(statsResult.rows[0].total_intentos_global)
+                },
+                filtros_aplicados: {
+                    cursoId: cursoId || null,
+                    activo: activo !== undefined ? (activo === 'true') : null,
+                    modoEstudio: modoEstudio || null
+                }
+            }
+        })
+
+    } catch (error) {
+        console.error('Error obteniendo todos los simulacros:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
+// ADMIN: OBTENER TODOS LOS INTENTOS (PARA PURIFICACIÓN)
+// =============================================
+const getAllIntentos = async (req, res) => {
+    try {
+        const { simulacroId, usuarioId, cursoId, fechaDesde, fechaHasta, puntajeMin, puntajeMax, page = 1, limit = 100 } = req.query
+        const offset = (parseInt(page) - 1) * parseInt(limit)
+
+        // Construir query dinámicamente
+        let whereConditions = []
+        let queryParams = []
+        let paramIndex = 1
+
+        if (simulacroId) {
+            whereConditions.push(`i.simulacro_id = $${paramIndex}`)
+            queryParams.push(simulacroId)
+            paramIndex++
+        }
+
+        if (usuarioId) {
+            whereConditions.push(`i.usuario_id = $${paramIndex}`)
+            queryParams.push(usuarioId)
+            paramIndex++
+        }
+
+        if (cursoId) {
+            whereConditions.push(`c.id = $${paramIndex}`)
+            queryParams.push(cursoId)
+            paramIndex++
+        }
+
+        if (fechaDesde) {
+            whereConditions.push(`i.fecha_intento >= $${paramIndex}`)
+            queryParams.push(fechaDesde)
+            paramIndex++
+        }
+
+        if (fechaHasta) {
+            whereConditions.push(`i.fecha_intento <= $${paramIndex}`)
+            queryParams.push(fechaHasta)
+            paramIndex++
+        }
+
+        if (puntajeMin) {
+            whereConditions.push(`i.puntaje >= $${paramIndex}`)
+            queryParams.push(parseFloat(puntajeMin))
+            paramIndex++
+        }
+
+        if (puntajeMax) {
+            whereConditions.push(`i.puntaje <= $${paramIndex}`)
+            queryParams.push(parseFloat(puntajeMax))
+            paramIndex++
+        }
+
+        const whereClause = whereConditions.length > 0
+            ? 'WHERE ' + whereConditions.join(' AND ')
+            : ''
+
+        // Query principal con información completa
+        const result = await pool.query(
+            `SELECT
+                i.*,
+                u.nombre_completo as usuario_nombre,
+                u.email as usuario_email,
+                s.titulo as simulacro_titulo,
+                c.titulo as curso_titulo,
+                c.id as curso_id,
+                (SELECT COUNT(*) FROM respuestas_usuario ru WHERE ru.intento_simulacro_id = i.id) as total_respuestas_guardadas
+             FROM intentos_simulacro i
+             JOIN perfiles_usuario u ON i.usuario_id = u.id
+             JOIN simulacros s ON i.simulacro_id = s.id
+             JOIN cursos c ON s.curso_id = c.id
+             ${whereClause}
+             ORDER BY i.fecha_intento DESC
+             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+            [...queryParams, parseInt(limit), offset]
+        )
+
+        // Contar total
+        const countResult = await pool.query(
+            `SELECT COUNT(*) as total
+             FROM intentos_simulacro i
+             JOIN perfiles_usuario u ON i.usuario_id = u.id
+             JOIN simulacros s ON i.simulacro_id = s.id
+             JOIN cursos c ON s.curso_id = c.id
+             ${whereClause}`,
+            queryParams
+        )
+
+        const totalIntentos = parseInt(countResult.rows[0].total)
+        const totalPages = Math.ceil(totalIntentos / parseInt(limit))
+
+        // Estadísticas de almacenamiento
+        const storageStats = await pool.query(
+            `SELECT
+                COUNT(i.id) as total_intentos,
+                SUM((SELECT COUNT(*) FROM respuestas_usuario ru WHERE ru.intento_simulacro_id = i.id)) as total_respuestas_almacenadas,
+                AVG(i.puntaje) as puntaje_promedio,
+                MIN(i.fecha_intento) as fecha_intento_mas_antiguo,
+                MAX(i.fecha_intento) as fecha_intento_mas_reciente
+             FROM intentos_simulacro i
+             JOIN simulacros s ON i.simulacro_id = s.id
+             JOIN cursos c ON s.curso_id = c.id
+             ${whereClause}`,
+            queryParams
+        )
+
+        const intentos = result.rows.map(row => ({
+            id: row.id,
+            fecha_intento: row.fecha_intento,
+            completado: row.completado,
+            usuario: {
+                id: row.usuario_id,
+                nombre: row.usuario_nombre,
+                email: row.usuario_email
+            },
+            simulacro: {
+                id: row.simulacro_id,
+                titulo: row.simulacro_titulo
+            },
+            curso: {
+                id: row.curso_id,
+                titulo: row.curso_titulo
+            },
+            resultados: {
+                puntaje: parseFloat(row.puntaje) || 0,
+                total_preguntas: row.total_preguntas,
+                respuestas_correctas: row.respuestas_correctas,
+                tiempo_empleado_minutos: row.tiempo_empleado_minutos
+            },
+            almacenamiento: {
+                respuestas_guardadas: parseInt(row.total_respuestas_guardadas)
+            }
+        }))
+
+        res.json({
+            success: true,
+            data: {
+                intentos,
+                paginacion: {
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    total: totalIntentos,
+                    totalPages,
+                    hasNext: parseInt(page) < totalPages,
+                    hasPrev: parseInt(page) > 1
+                },
+                estadisticas_almacenamiento: {
+                    total_intentos: parseInt(storageStats.rows[0].total_intentos),
+                    total_respuestas_almacenadas: parseInt(storageStats.rows[0].total_respuestas_almacenadas) || 0,
+                    puntaje_promedio: parseFloat(storageStats.rows[0].puntaje_promedio) || 0,
+                    fecha_mas_antigua: storageStats.rows[0].fecha_intento_mas_antiguo,
+                    fecha_mas_reciente: storageStats.rows[0].fecha_intento_mas_reciente,
+                    espacio_estimado_mb: ((parseInt(storageStats.rows[0].total_respuestas_almacenadas) || 0) * 0.5) / 1024 // Estimación: 0.5KB por respuesta
+                },
+                filtros_aplicados: {
+                    simulacroId: simulacroId || null,
+                    usuarioId: usuarioId || null,
+                    cursoId: cursoId || null,
+                    fechaDesde: fechaDesde || null,
+                    fechaHasta: fechaHasta || null,
+                    puntajeMin: puntajeMin || null,
+                    puntajeMax: puntajeMax || null
+                }
+            }
+        })
+
+    } catch (error) {
+        console.error('Error obteniendo intentos:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
+// ADMIN: ELIMINAR INTENTOS (HARD DELETE - PURIFICACIÓN)
+// =============================================
+const deleteIntentos = async (req, res) => {
+    try {
+        const { intentoIds } = req.body
+
+        if (!intentoIds || !Array.isArray(intentoIds) || intentoIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Se requiere un array de intentoIds'
+            })
+        }
+
+        // Obtener información antes de eliminar
+        const infoResult = await pool.query(
+            `SELECT
+                i.id,
+                i.usuario_id,
+                u.nombre_completo,
+                s.titulo as simulacro_titulo,
+                (SELECT COUNT(*) FROM respuestas_usuario ru WHERE ru.intento_simulacro_id = i.id) as respuestas_count
+             FROM intentos_simulacro i
+             JOIN perfiles_usuario u ON i.usuario_id = u.id
+             JOIN simulacros s ON i.simulacro_id = s.id
+             WHERE i.id = ANY($1)`,
+            [intentoIds]
+        )
+
+        if (infoResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'No se encontraron intentos con los IDs proporcionados'
+            })
+        }
+
+        const totalRespuestas = infoResult.rows.reduce((sum, row) => sum + parseInt(row.respuestas_count), 0)
+
+        // HARD DELETE - Eliminar intentos (CASCADE eliminará respuestas_usuario automáticamente)
+        const deleteResult = await pool.query(
+            `DELETE FROM intentos_simulacro
+             WHERE id = ANY($1)
+             RETURNING id`,
+            [intentoIds]
+        )
+
+        res.json({
+            success: true,
+            message: `${deleteResult.rows.length} intentos eliminados exitosamente`,
+            data: {
+                intentos_eliminados: deleteResult.rows.length,
+                respuestas_eliminadas: totalRespuestas,
+                espacio_liberado_estimado_mb: (totalRespuestas * 0.5) / 1024,
+                detalles: infoResult.rows.map(row => ({
+                    intento_id: row.id,
+                    usuario: row.nombre_completo,
+                    simulacro: row.simulacro_titulo,
+                    respuestas_eliminadas: parseInt(row.respuestas_count)
+                })),
+                advertencia: 'Esta acción es IRREVERSIBLE. Los datos han sido eliminados permanentemente.'
+            }
+        })
+
+    } catch (error) {
+        console.error('Error eliminando intentos:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
+// ADMIN: OBTENER ESTADÍSTICAS DE INTENTOS POR CURSO
+// =============================================
+const getIntentosStats = async (req, res) => {
+    try {
+        const { cursoId } = req.params
+
+        if (!cursoId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Se requiere el ID del curso'
+            })
+        }
+
+        // Estadísticas generales del curso
+        const statsResult = await pool.query(
+            `SELECT
+                c.id as curso_id,
+                c.titulo as curso_titulo,
+                COUNT(DISTINCT i.id) as total_intentos,
+                COUNT(DISTINCT i.usuario_id) as usuarios_unicos,
+                SUM((SELECT COUNT(*) FROM respuestas_usuario ru WHERE ru.intento_simulacro_id = i.id)) as total_respuestas_almacenadas,
+                AVG(i.puntaje) as puntaje_promedio,
+                MIN(i.fecha_intento) as fecha_intento_mas_antiguo,
+                MAX(i.fecha_intento) as fecha_intento_mas_reciente,
+                COUNT(DISTINCT s.id) as simulacros_en_curso
+             FROM cursos c
+             LEFT JOIN simulacros s ON c.id = s.curso_id
+             LEFT JOIN intentos_simulacro i ON s.id = i.simulacro_id
+             WHERE c.id = $1
+             GROUP BY c.id, c.titulo`,
+            [cursoId]
+        )
+
+        if (statsResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Curso no encontrado'
+            })
+        }
+
+        const stats = statsResult.rows[0]
+
+        // Desglose por simulacro
+        const simulacrosResult = await pool.query(
+            `SELECT
+                s.id as simulacro_id,
+                s.titulo as simulacro_titulo,
+                s.activo,
+                COUNT(i.id) as intentos,
+                COUNT(DISTINCT i.usuario_id) as usuarios_unicos,
+                SUM((SELECT COUNT(*) FROM respuestas_usuario ru WHERE ru.intento_simulacro_id = i.id)) as respuestas_almacenadas,
+                AVG(i.puntaje) as puntaje_promedio
+             FROM simulacros s
+             LEFT JOIN intentos_simulacro i ON s.id = i.simulacro_id
+             WHERE s.curso_id = $1
+             GROUP BY s.id, s.titulo, s.activo
+             ORDER BY intentos DESC`,
+            [cursoId]
+        )
+
+        // Desglose por fecha (últimos 12 meses)
+        const timelineResult = await pool.query(
+            `SELECT
+                TO_CHAR(i.fecha_intento, 'YYYY-MM') as mes,
+                COUNT(i.id) as intentos,
+                SUM((SELECT COUNT(*) FROM respuestas_usuario ru WHERE ru.intento_simulacro_id = i.id)) as respuestas
+             FROM intentos_simulacro i
+             JOIN simulacros s ON i.simulacro_id = s.id
+             WHERE s.curso_id = $1
+               AND i.fecha_intento >= NOW() - INTERVAL '12 months'
+             GROUP BY TO_CHAR(i.fecha_intento, 'YYYY-MM')
+             ORDER BY mes DESC`,
+            [cursoId]
+        )
+
+        const totalRespuestas = parseInt(stats.total_respuestas_almacenadas) || 0
+
+        res.json({
+            success: true,
+            data: {
+                curso: {
+                    id: stats.curso_id,
+                    titulo: stats.curso_titulo
+                },
+                resumen: {
+                    total_intentos: parseInt(stats.total_intentos) || 0,
+                    usuarios_unicos: parseInt(stats.usuarios_unicos) || 0,
+                    simulacros_en_curso: parseInt(stats.simulacros_en_curso) || 0,
+                    total_respuestas_almacenadas: totalRespuestas,
+                    puntaje_promedio: parseFloat(stats.puntaje_promedio) || 0,
+                    fecha_mas_antigua: stats.fecha_intento_mas_antiguo,
+                    fecha_mas_reciente: stats.fecha_intento_mas_reciente
+                },
+                almacenamiento: {
+                    respuestas_totales: totalRespuestas,
+                    espacio_estimado_mb: parseFloat(((totalRespuestas * 0.5) / 1024).toFixed(2)),
+                    espacio_estimado_gb: parseFloat(((totalRespuestas * 0.5) / 1024 / 1024).toFixed(3))
+                },
+                por_simulacro: simulacrosResult.rows.map(row => ({
+                    simulacro_id: row.simulacro_id,
+                    titulo: row.simulacro_titulo,
+                    activo: row.activo,
+                    intentos: parseInt(row.intentos) || 0,
+                    usuarios_unicos: parseInt(row.usuarios_unicos) || 0,
+                    respuestas_almacenadas: parseInt(row.respuestas_almacenadas) || 0,
+                    puntaje_promedio: parseFloat(row.puntaje_promedio) || 0,
+                    espacio_mb: parseFloat((((parseInt(row.respuestas_almacenadas) || 0) * 0.5) / 1024).toFixed(2))
+                })),
+                timeline_ultimos_12_meses: timelineResult.rows.map(row => ({
+                    mes: row.mes,
+                    intentos: parseInt(row.intentos),
+                    respuestas: parseInt(row.respuestas)
+                }))
+            }
+        })
+
+    } catch (error) {
+        console.error('Error obteniendo estadísticas de intentos:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
+// ADMIN: ELIMINAR SIMULACRO (SAFE DELETE)
+// =============================================
+const deleteSimulacro = async (req, res) => {
+    try {
+        const { simulacroId } = req.params
+
+        // Verificar que el simulacro existe
+        const checkResult = await pool.query(
+            `SELECT s.id, s.titulo, s.activo, c.titulo as curso_titulo,
+                    (SELECT COUNT(*) FROM preguntas p WHERE p.simulacro_id = s.id) as total_preguntas,
+                    (SELECT COUNT(*) FROM intentos_simulacro i WHERE i.simulacro_id = s.id) as total_intentos
+             FROM simulacros s
+             JOIN cursos c ON s.curso_id = c.id
+             WHERE s.id = $1`,
+            [simulacroId]
+        )
+
+        if (checkResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Simulacro no encontrado'
+            })
+        }
+
+        const simulacro = checkResult.rows[0]
+
+        // Safe delete - marcar como inactivo
+        const result = await pool.query(
+            `UPDATE simulacros
+             SET activo = false
+             WHERE id = $1
+             RETURNING *`,
+            [simulacroId]
+        )
+
+        res.json({
+            success: true,
+            message: 'Simulacro desactivado exitosamente (safe delete)',
+            data: {
+                simulacro: {
+                    id: simulacro.id,
+                    titulo: simulacro.titulo,
+                    curso_titulo: simulacro.curso_titulo,
+                    activo: false,
+                    estado_anterior: simulacro.activo
+                },
+                info: {
+                    preguntas_preservadas: parseInt(simulacro.total_preguntas),
+                    intentos_preservados: parseInt(simulacro.total_intentos),
+                    nota: 'El simulacro fue desactivado pero todos sus datos fueron preservados. Puede reactivarse en cualquier momento.'
+                }
+            }
+        })
+
+    } catch (error) {
+        console.error('Error eliminando simulacro:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
 module.exports = {
     getSimulacrosByCourse,
     getSimulacroQuestions,
     submitSimulacro,
     getMyAttempts,
-    getAttemptDetail
+    getAttemptDetail,
+    getAllSimulacros,
+    deleteSimulacro,
+    getAllIntentos,
+    deleteIntentos,
+    getIntentosStats
 }

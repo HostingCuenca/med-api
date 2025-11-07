@@ -6,9 +6,14 @@ const {
     getSimulacroQuestions,
     submitSimulacro,
     getMyAttempts,
-    getAttemptDetail
+    getAttemptDetail,
+    getAllSimulacros,
+    deleteSimulacro,
+    getAllIntentos,
+    deleteIntentos,
+    getIntentosStats
 } = require('../controllers/simulacroController')
-const { authenticateToken } = require('../middleware/auth')
+const { authenticateToken, requireRole } = require('../middleware/auth')
 
 // ==================== MIDDLEWARE DE LOGGING ====================
 router.use((req, res, next) => {
@@ -49,6 +54,45 @@ router.get('/my-attempts',
 router.get('/attempt/:intentoId',
     authenticateToken,
     getAttemptDetail
+)
+
+// ==================== RUTAS ADMIN ====================
+
+// IMPORTANTE: Rutas específicas DEBEN ir ANTES de rutas con parámetros dinámicos
+
+// Obtener todos los simulacros (con filtros)
+router.get('/admin/all',
+    authenticateToken,
+    requireRole(['admin']),
+    getAllSimulacros
+)
+
+// Obtener todos los intentos (para purificación)
+router.get('/admin/intentos',
+    authenticateToken,
+    requireRole(['admin']),
+    getAllIntentos
+)
+
+// Obtener estadísticas de intentos por curso
+router.get('/admin/intentos/stats/:cursoId',
+    authenticateToken,
+    requireRole(['admin']),
+    getIntentosStats
+)
+
+// Eliminar intentos (hard delete - purificación)
+router.delete('/admin/intentos',
+    authenticateToken,
+    requireRole(['admin']),
+    deleteIntentos
+)
+
+// Eliminar simulacro (safe delete) - DEBE IR AL FINAL
+router.delete('/admin/:simulacroId',
+    authenticateToken,
+    requireRole(['admin']),
+    deleteSimulacro
 )
 
 // ==================== MIDDLEWARE DE MANEJO DE ERRORES ====================
@@ -118,6 +162,26 @@ router.get('/docs', (req, res) => {
                     intentoId: 'UUID del intento'
                 },
                 response: 'Detalle completo del intento con respuestas (si está permitido)'
+            },
+            'GET /admin/all': {
+                description: '[ADMIN] Obtener todos los simulacros con filtros',
+                authentication: 'Bearer Token + Admin Role',
+                query: {
+                    cursoId: 'Filtrar por curso específico',
+                    activo: 'true/false - Filtrar por estado',
+                    modoEstudio: 'estudio/revision/evaluacion/examen_real',
+                    page: 'Número de página (default: 1)',
+                    limit: 'Límite por página (default: 50)'
+                },
+                response: 'Lista paginada de simulacros con estadísticas completas'
+            },
+            'DELETE /admin/:simulacroId': {
+                description: '[ADMIN] Eliminar simulacro (safe delete)',
+                authentication: 'Bearer Token + Admin Role',
+                parameters: {
+                    simulacroId: 'UUID del simulacro'
+                },
+                response: 'Confirmación de desactivación con información preservada'
             }
         },
         compatibility_features: {
