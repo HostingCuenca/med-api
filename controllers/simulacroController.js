@@ -95,9 +95,12 @@ const getSimulacroQuestions = async (req, res) => {
         // ✅ ACTUALIZADO: Query con todos los campos nuevos
         const accessCheck = await pool.query(
             `SELECT s.*, c.es_gratuito, c.titulo as curso_titulo,
+                    i.acceso_activo,
                     CASE
                         WHEN c.es_gratuito = true THEN 'habilitado'
                         WHEN i.estado_pago IS NULL THEN 'no_inscrito'
+                        WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = true THEN 'habilitado'
+                        WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = false THEN 'acceso_expirado'
                         ELSE i.estado_pago
                         END as estado_acceso
              FROM simulacros s
@@ -118,11 +121,15 @@ const getSimulacroQuestions = async (req, res) => {
 
         // Verificar acceso
         if (simulacro.estado_acceso !== 'habilitado') {
+            let mensaje = 'Tu inscripción está pendiente de aprobación. Contacta al administrador.'
+            if (simulacro.estado_acceso === 'no_inscrito') {
+                mensaje = 'Debes inscribirte en el curso para acceder a este simulacro'
+            } else if (simulacro.estado_acceso === 'acceso_expirado') {
+                mensaje = 'Tu acceso al curso ha expirado. Solicita renovación para continuar'
+            }
             return res.status(403).json({
                 success: false,
-                message: simulacro.estado_acceso === 'no_inscrito'
-                    ? 'Debes inscribirte en el curso para acceder a este simulacro'
-                    : 'Tu inscripción está pendiente de aprobación. Contacta al administrador.',
+                message: mensaje,
                 estadoAcceso: simulacro.estado_acceso
             })
         }
@@ -594,6 +601,7 @@ const submitSimulacro = async (req, res) => {
         // ✅ PASO 2: Verificar simulacro (igual que antes)
         const simulacroCheck = await client.query(
             `SELECT s.*, c.es_gratuito, c.titulo as curso_titulo,
+                    i.acceso_activo,
                     COALESCE(i.estado_pago, 'no_inscrito') as estado_pago
              FROM simulacros s
                       JOIN cursos c ON s.curso_id = c.id
@@ -609,8 +617,8 @@ const submitSimulacro = async (req, res) => {
 
         const simulacro = simulacroCheck.rows[0]
 
-        // Verificar acceso (igual que antes)
-        if (!simulacro.es_gratuito && simulacro.estado_pago !== 'habilitado') {
+        // Verificar acceso (ahora valida acceso_activo)
+        if (!simulacro.es_gratuito && (simulacro.estado_pago !== 'habilitado' || simulacro.acceso_activo !== true)) {
             await client.query('ROLLBACK')
             return res.status(403).json({ success: false, message: 'No tienes acceso a este simulacro' })
         }

@@ -232,14 +232,17 @@ const getMisClasesVirtuales = async (req, res) => {
         const result = await pool.query(
             `SELECT cv.*, c.titulo as curso_titulo, c.es_gratuito,
                 u.nombre_completo as instructor_nombre,
+                i.acceso_activo,
                 -- Verificar acceso igual que simulacros
                 CASE
                     WHEN c.es_gratuito = true THEN 'habilitado'
                     WHEN i.estado_pago IS NULL THEN 'no_inscrito'
+                    WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = true THEN 'habilitado'
+                    WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = false THEN 'acceso_expirado'
                     ELSE i.estado_pago
                 END as estado_acceso,
                 -- Estado temporal de la clase
-                CASE 
+                CASE
                     WHEN cv.fecha_programada < NOW() THEN 'finalizada'
                     WHEN cv.fecha_programada <= NOW() + INTERVAL '15 minutes' THEN 'proximamente'
                     ELSE 'programada'
@@ -248,8 +251,8 @@ const getMisClasesVirtuales = async (req, res) => {
             JOIN cursos c ON cv.curso_id = c.id
             LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
             LEFT JOIN perfiles_usuario u ON cv.creada_por = u.id
-            WHERE cv.activa = true 
-                AND (c.es_gratuito = true OR i.estado_pago = 'habilitado')
+            WHERE cv.activa = true
+                AND (c.es_gratuito = true OR (i.estado_pago = 'habilitado' AND i.acceso_activo = true))
             ORDER BY cv.fecha_programada DESC`,
             [userId]
         )
@@ -322,12 +325,15 @@ const getClaseVirtualDetail = async (req, res) => {
         const accessCheck = await pool.query(
             `SELECT cv.*, c.es_gratuito, c.titulo as curso_titulo,
                 u.nombre_completo as instructor_nombre, u.email as instructor_email,
+                i.acceso_activo,
                 CASE
                     WHEN c.es_gratuito = true THEN 'habilitado'
                     WHEN i.estado_pago IS NULL THEN 'no_inscrito'
+                    WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = true THEN 'habilitado'
+                    WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = false THEN 'acceso_expirado'
                     ELSE i.estado_pago
                 END as estado_acceso,
-                CASE 
+                CASE
                     WHEN cv.fecha_programada < NOW() THEN 'finalizada'
                     WHEN cv.fecha_programada <= NOW() + INTERVAL '15 minutes' THEN 'proximamente'
                     ELSE 'programada'
@@ -351,11 +357,15 @@ const getClaseVirtualDetail = async (req, res) => {
 
         // Verificar acceso (IGUAL que simulacros)
         if (claseVirtual.estado_acceso !== 'habilitado') {
+            let mensaje = 'Tu inscripción está pendiente de aprobación. Contacta al administrador.'
+            if (claseVirtual.estado_acceso === 'no_inscrito') {
+                mensaje = 'Debes inscribirte en el curso para acceder a esta clase virtual'
+            } else if (claseVirtual.estado_acceso === 'acceso_expirado') {
+                mensaje = 'Tu acceso al curso ha expirado. Solicita renovación para continuar'
+            }
             return res.status(403).json({
                 success: false,
-                message: claseVirtual.estado_acceso === 'no_inscrito'
-                    ? 'Debes inscribirte en el curso para acceder a esta clase virtual'
-                    : 'Tu inscripción está pendiente de aprobación. Contacta al administrador.',
+                message: mensaje,
                 estadoAcceso: claseVirtual.estado_acceso
             })
         }

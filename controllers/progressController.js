@@ -19,7 +19,7 @@ const updateClassProgress = async (req, res) => {
 
         // Verificar que la clase existe y el usuario tiene acceso
         const claseCheck = await pool.query(
-            `SELECT cl.id, c.es_gratuito, i.estado_pago, c.titulo as curso_titulo
+            `SELECT cl.id, c.es_gratuito, i.estado_pago, i.acceso_activo, c.titulo as curso_titulo
              FROM clases cl
                       JOIN modulos m ON cl.modulo_id = m.id
                       JOIN cursos c ON m.curso_id = c.id
@@ -37,8 +37,8 @@ const updateClassProgress = async (req, res) => {
 
         const clase = claseCheck.rows[0]
 
-        // Verificar acceso
-        if (!clase.es_gratuito && clase.estado_pago !== 'habilitado') {
+        // Verificar acceso (ahora valida acceso_activo)
+        if (!clase.es_gratuito && (clase.estado_pago !== 'habilitado' || clase.acceso_activo !== true)) {
             return res.status(403).json({
                 success: false,
                 message: 'No tienes acceso a esta clase'
@@ -86,7 +86,7 @@ const getCourseProgress = async (req, res) => {
 
         // Verificar acceso al curso
         const accesoCheck = await pool.query(
-            `SELECT c.titulo, c.slug, c.descripcion, c.miniatura_url, c.es_gratuito, i.estado_pago
+            `SELECT c.titulo, c.slug, c.descripcion, c.miniatura_url, c.es_gratuito, i.estado_pago, i.acceso_activo
              FROM cursos c
                       LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
              WHERE c.id = $2 AND c.activo = true`,
@@ -161,9 +161,10 @@ const getCourseProgress = async (req, res) => {
                     slug: curso.slug,
                     descripcion: curso.descripcion,
                     miniatura_url: curso.miniatura_url,
-                    tieneAcceso: curso.es_gratuito || curso.estado_pago === 'habilitado',
+                    tieneAcceso: curso.es_gratuito || (curso.estado_pago === 'habilitado' && curso.acceso_activo === true),
                     es_gratuito: curso.es_gratuito,
-                    estado_pago: curso.estado_pago
+                    estado_pago: curso.estado_pago,
+                    acceso_activo: curso.acceso_activo
                 },
                 resumen: {
                     ...resumen,
@@ -206,7 +207,7 @@ const getMyOverallProgress = async (req, res) => {
                       JOIN modulos m ON c.id = m.curso_id
                       JOIN clases cl ON m.id = cl.modulo_id
                       LEFT JOIN progreso_clases pc ON cl.id = pc.clase_id AND pc.usuario_id = $1
-             WHERE i.usuario_id = $1 AND i.estado_pago = 'habilitado'
+             WHERE i.usuario_id = $1 AND i.estado_pago = 'habilitado' AND i.acceso_activo = true
              GROUP BY c.id, c.titulo, c.slug, c.miniatura_url, i.fecha_inscripcion
              ORDER BY i.fecha_inscripcion DESC`,
             [userId]
@@ -225,7 +226,7 @@ const getMyOverallProgress = async (req, res) => {
                       LEFT JOIN clases cl ON m.id = cl.modulo_id
                       LEFT JOIN progreso_clases pc ON cl.id = pc.clase_id AND pc.usuario_id = $1
                       LEFT JOIN intentos_simulacro isa ON isa.usuario_id = $1
-             WHERE i.usuario_id = $1 AND i.estado_pago = 'habilitado'`,
+             WHERE i.usuario_id = $1 AND i.estado_pago = 'habilitado' AND i.acceso_activo = true`,
             [userId]
         )
 

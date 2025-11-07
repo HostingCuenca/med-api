@@ -209,15 +209,18 @@ const getMaterialDetail = async (req, res) => {
 
         // Query similar a simulacros
         const result = await pool.query(
-            `SELECT m.*, 
+            `SELECT m.*,
                 'admin' as autor,
                 '' as autor_email,
                 c.titulo as curso_titulo,
                 c.es_gratuito as curso_gratuito,
+                i.acceso_activo,
                 CASE
                     WHEN m.tipo_material IN ('libre', 'premium') THEN 'publico'
                     WHEN c.es_gratuito = true THEN 'habilitado'
                     WHEN i.estado_pago IS NULL THEN 'no_inscrito'
+                    WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = true THEN 'habilitado'
+                    WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = false THEN 'acceso_expirado'
                     ELSE i.estado_pago
                 END as estado_acceso
              FROM materiales m
@@ -247,10 +250,13 @@ const getMaterialDetail = async (req, res) => {
             puedeAcceder = false
             mensaje = 'Material premium - Contactar por WhatsApp para adquirir'
         } else if (material.tipo_material === 'curso' || !material.tipo_material) {
-            // Material de curso - verificar inscripción
+            // Material de curso - verificar inscripción Y acceso activo
             if (material.estado_acceso === 'habilitado') {
                 puedeAcceder = true
                 mensaje = 'Acceso habilitado por inscripción al curso'
+            } else if (material.estado_acceso === 'acceso_expirado') {
+                puedeAcceder = false
+                mensaje = 'Tu acceso al curso ha expirado. Solicita renovación para continuar'
             } else if (material.estado_acceso === 'no_inscrito') {
                 puedeAcceder = false
                 mensaje = 'Debes inscribirte en el curso para acceder a este material'
@@ -386,10 +392,12 @@ const getMisMateriales = async (req, res) => {
                 i.fecha_inscripcion,
                 i.fecha_habilitacion,
                 -- Estado de acceso más estricto
+                i.acceso_activo,
                 CASE
-                    WHEN i.estado_pago = 'habilitado' THEN 'habilitado'
+                    WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = true THEN 'habilitado'
+                    WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = false THEN 'acceso_expirado'
+                    WHEN i.estado_pago = 'pagado' AND i.acceso_activo = true THEN 'habilitado'
                     WHEN i.estado_pago = 'pendiente' THEN 'pendiente'
-                    WHEN i.estado_pago = 'pagado' THEN 'habilitado'
                     ELSE 'sin_acceso'
                 END as estado_acceso
             FROM materiales m
@@ -398,8 +406,9 @@ const getMisMateriales = async (req, res) => {
             -- Esto garantiza que SOLO se muestren materiales de cursos inscritos
             INNER JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
             WHERE (m.tipo_material = 'curso' OR m.tipo_material IS NULL)
-                -- ✅ CONDICIÓN MÁS ESTRICTA: Solo cursos con pago habilitado
+                -- ✅ CONDICIÓN MÁS ESTRICTA: Solo cursos con pago habilitado Y acceso activo
                 AND i.estado_pago IN ('habilitado', 'pagado')
+                AND i.acceso_activo = true
             ORDER BY m.fecha_creacion DESC`,
             [userId]
         )
@@ -489,9 +498,11 @@ const getMisMaterialesCompleto = async (req, res) => {
             SELECT m.*, c.titulo as curso_titulo, c.es_gratuito as curso_gratuito,
                 'admin' as autor,
                 i.estado_pago,
+                i.acceso_activo,
                 'curso_inscrito' as fuente_acceso,
                 CASE
-                    WHEN i.estado_pago IN ('habilitado', 'pagado') THEN 'habilitado'
+                    WHEN i.estado_pago IN ('habilitado', 'pagado') AND i.acceso_activo = true THEN 'habilitado'
+                    WHEN i.estado_pago IN ('habilitado', 'pagado') AND i.acceso_activo = false THEN 'acceso_expirado'
                     ELSE 'sin_acceso'
                 END as estado_acceso
             FROM materiales m
@@ -499,6 +510,7 @@ const getMisMaterialesCompleto = async (req, res) => {
             INNER JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
             WHERE (m.tipo_material = 'curso' OR m.tipo_material IS NULL)
                 AND i.estado_pago IN ('habilitado', 'pagado')
+                AND i.acceso_activo = true
 
             UNION ALL
 
