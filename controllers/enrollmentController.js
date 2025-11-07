@@ -49,12 +49,13 @@ const enrollCourse = async (req, res) => {
 
         // Crear inscripción
         const estadoInicial = curso.es_gratuito ? 'habilitado' : 'pendiente'
+        const accesoInicial = curso.es_gratuito ? true : false
 
         const result = await pool.query(
-            `INSERT INTO inscripciones (usuario_id, curso_id, estado_pago, fecha_habilitacion)
-             VALUES ($1, $2, $3, $4)
+            `INSERT INTO inscripciones (usuario_id, curso_id, estado_pago, acceso_activo, fecha_habilitacion)
+             VALUES ($1, $2, $3, $4, $5)
                  RETURNING *`,
-            [userId, cursoId, estadoInicial, curso.es_gratuito ? new Date() : null]
+            [userId, cursoId, estadoInicial, accesoInicial, curso.es_gratuito ? new Date() : null]
         )
 
         const mensaje = curso.es_gratuito
@@ -98,7 +99,12 @@ const getMyEnrollments = async (req, res) => {
                                 AS DECIMAL(5,2)
                             )
                         ELSE 0
-                        END as porcentaje_progreso
+                        END as porcentaje_progreso,
+                    CASE
+                        WHEN c.es_gratuito = true THEN true
+                        WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = true THEN true
+                        ELSE false
+                    END as tiene_acceso_actual
              FROM inscripciones i
                       JOIN cursos c ON i.curso_id = c.id
                       LEFT JOIN perfiles_usuario p ON c.instructor_id = p.id
@@ -150,10 +156,13 @@ const approvePayment = async (req, res) => {
             })
         }
 
-        // Aprobar pago
+        // Aprobar pago y activar acceso
         const result = await pool.query(
             `UPDATE inscripciones
-             SET estado_pago = 'habilitado', fecha_habilitacion = NOW(), habilitado_por = $1
+             SET estado_pago = 'habilitado',
+                 fecha_habilitacion = NOW(),
+                 habilitado_por = $1,
+                 acceso_activo = true
              WHERE id = $2
                  RETURNING *`,
             [adminId, inscripcionId]
@@ -463,10 +472,15 @@ const getAllEnrollments = async (req, res) => {
 
         // ========== QUERY BASE ==========
         let baseQuery = `
-            SELECT i.*, 
+            SELECT i.*,
                    u.nombre_completo, u.email, u.nombre_usuario, u.telefono,
                    c.titulo as curso_titulo, c.precio, c.es_gratuito, c.slug,
-                   admin.nombre_completo as aprobado_por_nombre
+                   admin.nombre_completo as aprobado_por_nombre,
+                   CASE
+                       WHEN c.es_gratuito = true THEN true
+                       WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = true THEN true
+                       ELSE false
+                   END as tiene_acceso_actual
             FROM inscripciones i
             JOIN perfiles_usuario u ON i.usuario_id = u.id
             JOIN cursos c ON i.curso_id = c.id
@@ -479,6 +493,8 @@ const getAllEnrollments = async (req, res) => {
                    COUNT(CASE WHEN i.estado_pago = 'pendiente' THEN 1 END) as pendientes,
                    COUNT(CASE WHEN i.estado_pago = 'habilitado' THEN 1 END) as habilitadas,
                    COUNT(CASE WHEN i.estado_pago = 'rechazado' THEN 1 END) as rechazadas,
+                   COUNT(CASE WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = true THEN 1 END) as accesos_activos,
+                   COUNT(CASE WHEN i.estado_pago = 'habilitado' AND i.acceso_activo = false THEN 1 END) as accesos_inactivos,
                    SUM(CASE WHEN i.estado_pago = 'habilitado' AND NOT c.es_gratuito THEN c.precio ELSE 0 END) as ingresos_totales,
                    SUM(CASE WHEN i.estado_pago = 'pendiente' AND NOT c.es_gratuito THEN c.precio ELSE 0 END) as ingresos_pendientes
             FROM inscripciones i
@@ -613,6 +629,8 @@ const getAllEnrollments = async (req, res) => {
         const pendientes = parseInt(stats.pendientes) || 0
         const habilitadas = parseInt(stats.habilitadas) || 0
         const rechazadas = parseInt(stats.rechazadas) || 0
+        const accesosActivos = parseInt(stats.accesos_activos) || 0
+        const accesosInactivos = parseInt(stats.accesos_inactivos) || 0
         const ingresosTotales = parseFloat(stats.ingresos_totales) || 0
         const ingresosPendientes = parseFloat(stats.ingresos_pendientes) || 0
 
@@ -630,6 +648,8 @@ const getAllEnrollments = async (req, res) => {
                         pendientes,
                         habilitadas,
                         rechazadas,
+                        accesos_activos: accesosActivos,
+                        accesos_inactivos: accesosInactivos,
                         ingresos_totales: ingresosTotales,
                         ingresos_pendientes: ingresosPendientes
                     }
@@ -680,6 +700,8 @@ const getAllEnrollments = async (req, res) => {
                     pendientes,
                     habilitadas,
                     rechazadas,
+                    accesos_activos: accesosActivos,
+                    accesos_inactivos: accesosInactivos,
                     ingresos_totales: ingresosTotales,
                     ingresos_pendientes: ingresosPendientes
                 },
@@ -829,7 +851,7 @@ const checkCourseAccess = async (req, res) => {
         console.log('🔍 Verificando acceso para:', { userId, cursoId })
 
         const result = await pool.query(
-            `SELECT c.es_gratuito, i.estado_pago, i.fecha_habilitacion
+            `SELECT c.es_gratuito, i.estado_pago, i.acceso_activo, i.fecha_habilitacion
              FROM cursos c
                       LEFT JOIN inscripciones i ON c.id = i.curso_id AND i.usuario_id = $1
              WHERE c.id = $2 AND c.activo = true`,
@@ -848,13 +870,13 @@ const checkCourseAccess = async (req, res) => {
         console.log('📚 Datos del curso:', {
             es_gratuito: curso.es_gratuito,
             estado_pago: curso.estado_pago,
+            acceso_activo: curso.acceso_activo,
             fecha_habilitacion: curso.fecha_habilitacion
         })
 
-        // ✅ CORREGIDO: Validar tanto 'habilitado' como 'pagado' para compatibilidad
+        // ✅ NUEVA LÓGICA: Validar estado_pago Y acceso_activo
         const tieneAcceso = curso.es_gratuito ||
-            curso.estado_pago === 'habilitado' ||
-            curso.estado_pago === 'pagado'
+            (curso.estado_pago === 'habilitado' && curso.acceso_activo === true)
 
         // Determinar si está inscrito (tiene cualquier estado de pago)
         const estaInscrito = curso.estado_pago !== null && curso.estado_pago !== undefined
@@ -863,20 +885,14 @@ const checkCourseAccess = async (req, res) => {
         let estadoParaFrontend = 'no_inscrito'
         if (curso.estado_pago) {
             // Normalizar estados para el frontend
-            switch (curso.estado_pago) {
-                case 'habilitado':
-                case 'pagado':
-                    estadoParaFrontend = 'habilitado'
-                    break
-                case 'pendiente':
-                    estadoParaFrontend = 'pendiente'
-                    break
-                case 'cancelado':
-                case 'expirado':
-                    estadoParaFrontend = 'cancelado'
-                    break
-                default:
-                    estadoParaFrontend = curso.estado_pago
+            if (curso.estado_pago === 'habilitado') {
+                estadoParaFrontend = curso.acceso_activo ? 'habilitado' : 'inactivo'
+            } else if (curso.estado_pago === 'pendiente') {
+                estadoParaFrontend = 'pendiente'
+            } else if (curso.estado_pago === 'rechazado') {
+                estadoParaFrontend = 'rechazado'
+            } else {
+                estadoParaFrontend = curso.estado_pago
             }
         }
 
@@ -886,9 +902,9 @@ const checkCourseAccess = async (req, res) => {
                 tieneAcceso,
                 esGratuito: curso.es_gratuito,
                 estadoPago: estadoParaFrontend,
-                estado_pago: estadoParaFrontend,  // ✅ Compatibilidad adicional
+                accesoActivo: curso.acceso_activo,  // ✅ NUEVO
                 fechaHabilitacion: curso.fecha_habilitacion,
-                inscrito: estaInscrito  // ✅ Basado en si tiene inscripción
+                inscrito: estaInscrito
             }
         }
 
@@ -910,6 +926,187 @@ const checkCourseAccess = async (req, res) => {
     }
 }
 
+// =============================================
+// DESACTIVAR ACCESO (INDIVIDUAL O BULK)
+// =============================================
+const suspendAccess = async (req, res) => {
+    try {
+        const { inscripcionIds } = req.body
+        const adminId = req.user.id
+
+        if (!inscripcionIds || inscripcionIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Debes proporcionar al menos una inscripción'
+            })
+        }
+
+        const ids = Array.isArray(inscripcionIds) ? inscripcionIds : [inscripcionIds]
+
+        // Obtener información antes de suspender
+        const infoResult = await pool.query(
+            `SELECT i.id, u.nombre_completo, c.titulo, i.estado_pago, i.acceso_activo
+             FROM inscripciones i
+             JOIN perfiles_usuario u ON i.usuario_id = u.id
+             JOIN cursos c ON i.curso_id = c.id
+             WHERE i.id = ANY($1) AND i.estado_pago = 'habilitado' AND i.acceso_activo = true`,
+            [ids]
+        )
+
+        if (infoResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'No se encontraron inscripciones activas para suspender'
+            })
+        }
+
+        // Suspender acceso (solo cambiar acceso_activo, estado_pago NO cambia)
+        const result = await pool.query(
+            `UPDATE inscripciones
+             SET acceso_activo = false
+             WHERE id = ANY($1) AND estado_pago = 'habilitado' AND acceso_activo = true
+             RETURNING *`,
+            [ids]
+        )
+
+        const suspendidos = infoResult.rows.map(r =>
+            `${r.nombre_completo} - ${r.titulo}`
+        ).join(', ')
+
+        res.json({
+            success: true,
+            message: `${result.rows.length} acceso(s) desactivado(s): ${suspendidos}. El historial de pago se mantiene.`,
+            data: {
+                suspendidos: result.rows,
+                total: result.rows.length
+            }
+        })
+
+    } catch (error) {
+        console.error('Error suspendiendo acceso:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
+// REACTIVAR ACCESO (INDIVIDUAL O BULK)
+// =============================================
+const reactivateAccess = async (req, res) => {
+    try {
+        const { inscripcionIds } = req.body
+        const adminId = req.user.id
+
+        if (!inscripcionIds || inscripcionIds.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Debes proporcionar al menos una inscripción'
+            })
+        }
+
+        const ids = Array.isArray(inscripcionIds) ? inscripcionIds : [inscripcionIds]
+
+        // Obtener información antes de reactivar
+        const infoResult = await pool.query(
+            `SELECT i.id, u.nombre_completo, c.titulo, i.estado_pago, i.acceso_activo
+             FROM inscripciones i
+             JOIN perfiles_usuario u ON i.usuario_id = u.id
+             JOIN cursos c ON i.curso_id = c.id
+             WHERE i.id = ANY($1) AND i.estado_pago = 'habilitado' AND i.acceso_activo = false`,
+            [ids]
+        )
+
+        if (infoResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'No se encontraron inscripciones inactivas para reactivar'
+            })
+        }
+
+        // Reactivar acceso
+        const result = await pool.query(
+            `UPDATE inscripciones
+             SET acceso_activo = true
+             WHERE id = ANY($1) AND estado_pago = 'habilitado' AND acceso_activo = false
+             RETURNING *`,
+            [ids]
+        )
+
+        const reactivados = infoResult.rows.map(r =>
+            `${r.nombre_completo} - ${r.titulo}`
+        ).join(', ')
+
+        res.json({
+            success: true,
+            message: `${result.rows.length} acceso(s) reactivado(s): ${reactivados}`,
+            data: {
+                reactivados: result.rows,
+                total: result.rows.length
+            }
+        })
+
+    } catch (error) {
+        console.error('Error reactivando acceso:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
+// =============================================
+// CERRAR TEMPORADA DE UN CURSO (desactivar todos)
+// =============================================
+const closeCourseSeason = async (req, res) => {
+    try {
+        const { cursoId } = req.params
+        const adminId = req.user.id
+
+        // Verificar que el curso existe
+        const cursoResult = await pool.query(
+            'SELECT titulo FROM cursos WHERE id = $1',
+            [cursoId]
+        )
+
+        if (cursoResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'Curso no encontrado'
+            })
+        }
+
+        const curso = cursoResult.rows[0]
+
+        // Suspender todos los accesos habilitados del curso
+        const result = await pool.query(
+            `UPDATE inscripciones
+             SET acceso_activo = false
+             WHERE curso_id = $1 AND estado_pago = 'habilitado' AND acceso_activo = true
+             RETURNING *`,
+            [cursoId]
+        )
+
+        res.json({
+            success: true,
+            message: `Temporada cerrada: ${result.rows.length} acceso(s) desactivado(s) del curso "${curso.titulo}". Los usuarios pueden re-solicitar.`,
+            data: {
+                curso: curso.titulo,
+                total_desactivados: result.rows.length,
+                desactivados: result.rows
+            }
+        })
+
+    } catch (error) {
+        console.error('Error cerrando temporada:', error)
+        res.status(500).json({
+            success: false,
+            message: 'Error interno del servidor'
+        })
+    }
+}
+
 
 module.exports = {
     enrollCourse,
@@ -918,5 +1115,8 @@ module.exports = {
     getPendingPayments,
     checkCourseAccess,
     getAllEnrollments,
-    getEnrollmentStats
+    getEnrollmentStats,
+    suspendAccess,
+    reactivateAccess,
+    closeCourseSeason
 }

@@ -8,9 +8,11 @@ const {
     approvePayment,
     getPendingPayments,
     checkCourseAccess,
-    getAllEnrollments  ,
-    getEnrollmentStats
-    // ✅ IMPORTAR NUEVO MÉTODO
+    getAllEnrollments,
+    getEnrollmentStats,
+    suspendAccess,
+    reactivateAccess,
+    closeCourseSeason
 } = require('../controllers/enrollmentController')
 const { authenticateToken, requireRole } = require('../middleware/auth')
 
@@ -35,5 +37,15 @@ router.get('/pending', authenticateToken, requireRole(['admin']), getPendingPaym
 
 // Aprobar pago específico
 router.patch('/:inscripcionId/approve', authenticateToken, requireRole(['admin']), approvePayment)
+
+// ✅ NUEVAS RUTAS - Gestión de accesos
+// Desactivar acceso (individual o bulk)
+router.post('/suspend', authenticateToken, requireRole(['admin']), suspendAccess)
+
+// Reactivar acceso (individual o bulk)
+router.post('/reactivate', authenticateToken, requireRole(['admin']), reactivateAccess)
+
+// Cerrar temporada de un curso (desactivar todos los accesos del curso)
+router.post('/course/:cursoId/close-season', authenticateToken, requireRole(['admin']), closeCourseSeason)
 
 module.exports = router

@@ -13,7 +13,7 @@ const generateToken = (userId) => {
 // =============================================
 const register = async (req, res) => {
     try {
-        const { email, password, nombreCompleto, nombreUsuario } = req.body
+        const { email, password, nombreCompleto, nombreUsuario, telefono } = req.body
 
         // Validaciones
         if (!email || !password || !nombreCompleto || !nombreUsuario) {
@@ -46,12 +46,12 @@ const register = async (req, res) => {
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 12)
 
-        // Crear usuario
+        // Crear usuario (telefono es opcional)
         const result = await pool.query(
-            `INSERT INTO perfiles_usuario (email, password_hash, nombre_completo, nombre_usuario) 
-       VALUES ($1, $2, $3, $4) 
-       RETURNING id, email, nombre_completo, nombre_usuario, tipo_usuario, fecha_registro`,
-            [email, hashedPassword, nombreCompleto, nombreUsuario]
+            `INSERT INTO perfiles_usuario (email, password_hash, nombre_completo, nombre_usuario, telefono)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, email, nombre_completo, nombre_usuario, telefono, tipo_usuario, fecha_registro`,
+            [email, hashedPassword, nombreCompleto, nombreUsuario, telefono || null]
         )
 
         const user = result.rows[0]
